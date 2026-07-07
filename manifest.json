@@ -1,0 +1,19 @@
+{
+  "name": "Bulk Day",
+  "short_name": "Bulk Day",
+  "description": "The next session of James's 90-day bulking program, one tap from the home screen.",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0d1117",
+  "background_color": "#0d1117",
+  "start_url": "./",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Bulk Day</title>
+
+<!--
+  Bulk Day — the whole app in one file.
+  Structure of this file, top to bottom:
+    1. head tags below (viewport, theme color, iOS install hints, manifest)
+    2. a style block — all the CSS, dark theme, sized for arm's-length reading
+    3. a few empty containers in the body that the JS fills in
+    4. one script — the plan data, the pure logic, then rendering + wiring
+
+  This is a PWA (Progressive Web App): a normal web page plus a manifest and a
+  service worker, which together let you install it to the iPhone home screen
+  and run it offline. No frameworks, no build step — just this file.
+-->
+
+<!-- The viewport tag makes the page size to the phone screen instead of a
+     zoomed-out desktop layout. Without it a phone renders at ~980px wide. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<!-- theme-color tints the iOS status bar / Android toolbar to match the app. -->
+<meta name="theme-color" content="#0d1117">
+
+<!-- iOS-only hints so "Add to Home Screen" launches full-screen (standalone),
+     not inside a Safari tab with the address bar. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bulk Day">
+
+<!-- The manifest describes the installed app (name, colors, icon). Relative
+     path because the site lives under /bulking-pwa/, not the domain root. -->
+<link rel="manifest" href="./manifest.json">
+
+<!-- iOS ignores the manifest icon and uses this one for the home-screen tile. -->
+<link rel="apple-touch-icon" href="./icon-512.png">
+
+<style>
+  /* ---- Theme tokens (colors used everywhere, named once) ---- */
+  :root {
+    --bg: #0d1117;          /* page background, near-black */
+    --panel: #161b22;       /* cards sit slightly above the background */
+    --panel-2: #1c232d;     /* nested rows / table stripes */
+    --border: #2a323d;      /* hairline borders */
+    --text: #e6edf3;        /* primary text */
+    --muted: #9aa7b4;       /* secondary text */
+    --accent: #58a6ff;      /* blue — the one highlight color */
+    --accent-dim: #1f3a5f;  /* filled dots, quiet accent fills */
+    --good: #3fb950;        /* green — used ONLY for "banked / done" positives */
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    /* System font stack — no web fonts to download, works offline. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+    /* Respect the iPhone notch / home-indicator safe areas. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .wrap {
+    max-width: 560px;      /* comfortable single column on phone and desktop */
+    margin: 0 auto;
+    padding: 20px 16px 48px;
+  }
+
+  /* ---- Phase banner (always visible at the top) ---- */
+  .phase-banner {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .phase-banner .week {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .phase-banner .focus {
+    font-size: 17px;
+    margin-top: 4px;
+    color: var(--text);
+  }
+  .phase-banner .focus .phase-name { font-weight: 700; }
+
+  /* ---- The dot grid (banked sessions) ---- */
+  .grid-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .grid-label {
+    font-size: 15px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .grid-label strong { color: var(--text); font-weight: 700; }
+
+  .dots {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 8px;
+  }
+  .dot {
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    background: transparent;
+    border: 2px solid var(--border);   /* empty = "not yet", never a warning */
+  }
+  .dot.filled {
+    background: var(--good);
+    border-color: var(--good);
+  }
+  .dots.mobility .dot.filled {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .mobility-row-label {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 16px 0 8px;
+  }
+
+  /* ---- Generic card used by every screen's main content ---- */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 4px;
+    font-size: 22px;
+  }
+  .card .subhead {
+    color: var(--muted);
+    font-size: 15px;
+    margin: 0 0 16px;
+  }
+
+  /* ---- Exercise table (lift + mobility) ---- */
+  .exercise {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel-2);
+    margin-bottom: 8px;
+  }
+  /* Superset partners share a visual group: 1a sits directly on top of 1b. */
+  .exercise.pair-b { margin-top: -8px; border-top-left-radius: 0; border-top-right-radius: 0; }
+  .exercise.pair-a { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+
+  .exercise .tag {
+    flex: 0 0 auto;
+    min-width: 30px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: 6px;
+    padding: 3px 6px;
+    margin-top: 2px;
+  }
+  .exercise .body { flex: 1 1 auto; min-width: 0; }
+  .exercise .name { font-size: 16px; font-weight: 600; }
+  .exercise .scheme { font-size: 14px; color: var(--muted); margin-top: 2px; }
+
+  /* The checkbox is a big tap target — easy to hit with a sweaty thumb. */
+  .exercise label.check {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    margin: -6px -4px -6px 0;
+  }
+  .exercise input[type="checkbox"] {
+    width: 26px;
+    height: 26px;
+    accent-color: var(--good);
+  }
+
+  .finisher {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    margin-top: 4px;
+  }
+  .finisher .tag {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ---- Buttons ---- */
+  .btn {
+    display: block;
+    width: 100%;
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 12px;
+    font-family: inherit;
+  }
+  .btn-done {
+    background: var(--good);
+    color: #06210c;
+  }
+  .btn-done:disabled {
+    background: var(--panel-2);
+    color: var(--muted);
+    cursor: default;
+  }
+
+  /* ---- Coach note (the reward after banking) ---- */
+  .coach {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-top: 4px;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .coach .who {
+    display: block;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  /* ---- Nutrition block (rest day) ---- */
+  .macros {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .macro {
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    text-align: center;
+  }
+  .macro .num { font-size: 26px; font-weight: 800; color: var(--text); }
+  .macro .unit { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  .preview-line {
+    font-size: 15px;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+  .preview-line strong { color: var(--text); }
+
+  /* ---- Chips + small links ---- */
+  .chip {
+    display: inline-block;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .train-anyway {
+    display: inline-block;
+    margin-top: 14px;
+    color: var(--accent);
+    font-size: 15px;
+    text-decoration: underline;
+    cursor: pointer;
+    background: none;
+    border: none;
+    font-family: inherit;
+    padding: 0;
+  }
+
+  ul.plain { margin: 8px 0 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 4px; }
+
+  /* ---- Collapsible reference section at the bottom ---- */
+  .reference { margin-top: 8px; }
+  .reference details {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .reference summary {
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    list-style: none;
+  }
+  .reference summary::-webkit-details-marker { display: none; }
+  .reference summary::after { content: "  +"; color: var(--muted); float: right; }
+  .reference details[open] summary::after { content: "  –"; }
+  .reference .ref-body { padding: 0 16px 16px; font-size: 15px; color: var(--muted); }
+  .reference .ref-body strong { color: var(--text); }
+  .reference .ref-body ul { margin: 6px 0; padding-left: 20px; }
+
+  .section-title {
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+    margin: 24px 0 8px;
+  }
+
+  .footnote {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 28px;
+    line-height: 1.5;
+  }
+</style>
+
+<div class="wrap">
+  <!-- These four containers are filled in by the render functions below. -->
+  <div id="phase-banner"></div>
+  <div id="grid"></div>
+  <div id="main"></div>
+  <div id="reference"></div>
+  <div class="footnote">
+    Bulk Day · the vault note stays the record of truth.<br>
+    Weigh in Fridays; log weight there.
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   PLAN DATA
+   A snapshot of /Users/jxm/jxm-vault/Topics/90-Day Bulking Plan.md
+   (the vault note is canonical; if they drift, the note wins).
+   ============================================================ */
+
+// The three lift sessions. Each exercise is either a superset partner
+// (pair "1a"/"1b"/"2a"/"2b") or the standalone carry finisher (pair null).
+const WORKOUTS = {
+  A: {
+    title: "Day A — Squat + Push",
+    exercises: [
+      { pair: "1a", name: "Bearhug squat (37.5 bag)",              scheme: "3 × 10–15" },
+      { pair: "1b", name: "Push-ups (see progression)",            scheme: "3 × 8–15" },
+      { pair: "2a", name: "Sandbag shoulder press (37.5, two hands)", scheme: "3 × 8–12" },
+      { pair: "2b", name: "Walking lunge (14 lb each hand)",       scheme: "3 × 10/leg" }
+    ],
+    finisher: { name: "Bearhug carry (37.5)", scheme: "3 × 40 steps" }
+  },
+  B: {
+    title: "Day B — Hinge + Pull",
+    exercises: [
+      { pair: "1a", name: "Sandbag RDL (37.5 each hand = 75 lb)",  scheme: "3 × 10–15" },
+      { pair: "1b", name: "Bent-over row (37.5, two hands → one arm)", scheme: "3 × 8–12" },
+      { pair: "2a", name: "Sandbag clean to shoulder (37.5, alternate)", scheme: "3 × 5/side" },
+      { pair: "2b", name: "Single-leg RDL (14 lb opposite hand)",  scheme: "3 × 8/leg" }
+    ],
+    finisher: { name: "Farmer carry (37.5 each hand)", scheme: "3 × 40 steps" }
+  },
+  C: {
+    title: "Day C — Unilateral + Arms",
+    exercises: [
+      { pair: "1a", name: "Bulgarian split squat (BW → 14s → bearhug 37.5)", scheme: "3 × 8–12/leg" },
+      { pair: "1b", name: "Feet-elevated push-ups",               scheme: "3 × leave 2 in tank" },
+      { pair: "2a", name: "Step-ups (14s in hand)",               scheme: "3 × 10/leg" },
+      { pair: "2b", name: "Biceps curls (14s) + overhead triceps ext (14)", scheme: "3 × 12–15 each" }
+    ],
+    finisher: { name: "Shoulder carry (37.5, switch halfway)", scheme: "3 × 40 steps" }
+  }
+};
+
+// Saturday mobility flow: six movements 60–90s each, then conversational cardio.
+const MOBILITY = {
+  title: "Saturday — Mobility + light conditioning",
+  subhead: "About 40 minutes, easy on purpose.",
+  movements: [
+    "Deep squat hold",
+    "90/90 hip switches",
+    "Couch stretch",
+    "Cat-cow",
+    "Thoracic rotations",
+    "Down-dog ↔ cobra"
+  ],
+  movementScheme: "60–90s each",
+  conditioning: "20–30 min brisk walk or easy bike — conversational pace. Hard cardio burns the surplus."
+};
+
+// Nutrition targets, shown big on rest days and in the reference section.
+const NUTRITION = {
+  calories: "2,900",
+  protein: "150–160 g",
+  shake: "12 oz whole milk + 2 scoops whey + banana + 2 tbsp peanut butter + ½ cup dry oats, blended (~850 cal / 60 g protein).",
+  groceries: "Eggs, whole milk, whey, oats, peanut butter, bananas, bread, Greek yogurt, microwave rice, rotisserie chicken, ground beef, olive oil, frozen veg.",
+  doubleProgression: "Hit the top of the rep range on ALL sets → next session add a 4th set or move to the harder variation.",
+  weighIn: [
+    "Weigh every Friday morning — after the bathroom, before food.",
+    "2-week trend rising under 0.3 lb/week → add 250 cal (bigger shake).",
+    "Gaining over 1 lb/week two weeks straight → trim 200 cal.",
+    "The scale is the boss, not the meal plan."
+  ]
+};
+
+// A small rotating set of coach lines per phase. One shows after banking.
+// Tone: witness, not judge — earned, never scolding, never a count-down.
+const COACH_NOTES = {
+  Groove: [
+    "Banked. Grooving the pattern is the whole job right now — clean reps beat heavy reps.",
+    "That's one in the bank. Stay two shy of failure and let the movement get familiar.",
+    "Logged. Early weeks are about showing up and moving well. You did both."
+  ],
+  Volume: [
+    "Banked. Now it's volume — slow the lowering to three seconds and let the reps stack up.",
+    "One more down. Chase the top of every rep range; that's what triggers the fourth set.",
+    "Logged. Tempo is the weight you don't have to buy. Nice work."
+  ],
+  "Hard variations": [
+    "Banked. This is the hard-variation block — one-arm work and bag-on-back push-ups earn their keep.",
+    "That counts. The harder variations are where the shape actually changes. Keep going.",
+    "Logged. Rests can stretch toward a minute now; the intensity is doing the talking."
+  ],
+  "Test + measure": [
+    "Banked. Test week — this is the measure-what-you-built stretch. Finish strong.",
+    "One more. You're at the top of the block; log the numbers when you test.",
+    "Logged. Almost through the block. Bank it, then let's plan phase two."
+  ]
+};
+
+// ============================================================
+// === PURE LOGIC START ===
+// Pure DATA and pure FUNCTIONS only: no DOM, no localStorage, no
+// window/location. The plan constants these functions depend on live inside
+// these markers too, so the extracted block is self-contained on its own.
+// Every function is a pure function of its arguments. A node test
+// harness extracts this exact block (everything between the START and
+// END markers) and calls these functions by name, so the block must be
+// valid standalone JavaScript — both markers are plain line comments.
+//
+// Date convention: functions take a JS Date built for the LOCAL day.
+// We read it with getFullYear/getMonth/getDate (local getters) so the
+// result depends on the device's local calendar day, never on UTC.
+// ============================================================
+
+// The program starts Monday 2026-07-06 and runs 12 weeks (last day 2026-10-03).
+// Stored as parts, not a Date string, so we can build a LOCAL date with no
+// timezone surprises (see makeLocalDate below).
+const PROGRAM_START = { year: 2026, month: 7, day: 6 }; // month is 1-based here
+const PROGRAM_WEEKS = 12;
+const SESSIONS_TO_COMPLETE = 36;      // 3 lifts/week * 12 weeks
+const BLOCK_COMPLETE_DATE = { year: 2026, month: 10, day: 4 }; // on/after -> done
+
+// The four phases, keyed by the weeks they cover, with a one-line focus.
+const PHASES = [
+  { weeks: [1, 3],   name: "Groove",          focus: "Learn the sandbag movements; stay 2 reps shy of failure." },
+  { weeks: [4, 7],   name: "Volume",          focus: "Double-progression rule; 3-second lowering on squats and push-ups." },
+  { weeks: [8, 11],  name: "Hard variations", focus: "One-arm rows, bearhug Bulgarians, bag-on-back push-ups; ~60s rests." },
+  { weeks: [12, 12], name: "Test + measure",  focus: "Max push-up test, weigh-in, photos, plan the next block." }
+];
+
+// Build a Date at LOCAL midnight from year/month(1-based)/day parts.
+// We pass day-of-month args to the Date constructor (not a "YYYY-MM-DD"
+// string) because the string form parses as UTC midnight, which can shift
+// the day backward in western timezones. This form is always local.
+function makeLocalDate(year, month1Based, day) {
+  return new Date(year, month1Based - 1, day);
+}
+
+// Whole days from date A to date B, ignoring the time-of-day component.
+// We normalize both to local midnight first so a 9am "today" and an 11pm
+// "start" still differ by an exact number of days.
+function daysBetween(fromDate, toDate) {
+  const a = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  const b = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate());
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  return Math.round((b - a) / MS_PER_DAY);
+}
+
+// weekNumber(date) -> 1..12. Days before the start clamp to 1; the overrun
+// tail (days 85–90, i.e. 2026-09-28 → 10-03) computes as 13 and clamps to 12.
+function weekNumber(date) {
+  const start = makeLocalDate(PROGRAM_START.year, PROGRAM_START.month, PROGRAM_START.day);
+  const dayIndex = daysBetween(start, date);       // 0 on the start day
+  const rawWeek = Math.floor(dayIndex / 7) + 1;     // 1-based week number
+  if (rawWeek < 1) return 1;
+  if (rawWeek > PROGRAM_WEEKS) return PROGRAM_WEEKS;
+  return rawWeek;
+}
+
+// dayType(date) -> which kind of day this is, by LOCAL weekday.
+// Mon/Wed/Fri = lift, Sat = mobility, Tue/Thu/Sun = rest.
+function dayType(date) {
+  const weekday = date.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+  if (weekday === 1 || weekday === 3 || weekday === 5) return "lift";
+  if (weekday === 6) return "mobility";
+  return "rest"; // Sun (0), Tue (2), Thu (4)
+}
+
+// Count how many of the completed sessions were lifts (A/B/C).
+// Mobility sessions do NOT count toward the lift rotation or the 36-dot grid.
+function liftCount(sessions) {
+  if (!Array.isArray(sessions)) return 0;
+  let count = 0;
+  for (const s of sessions) {
+    if (s && (s.type === "A" || s.type === "B" || s.type === "C")) count++;
+  }
+  return count;
+}
+
+// nextLiftType(sessions) -> "A" | "B" | "C".
+// The rotation is strictly A→B→C by POSITION, not by calendar. Position is the
+// number of lifts already banked, mod 3 — so a missed day never advances it.
+function nextLiftType(sessions) {
+  const position = liftCount(sessions) % 3;
+  return ["A", "B", "C"][position];
+}
+
+// phaseFor(week) -> { name, focus } for that week number.
+function phaseFor(week) {
+  for (const phase of PHASES) {
+    if (week >= phase.weeks[0] && week <= phase.weeks[1]) {
+      return { name: phase.name, focus: phase.focus };
+    }
+  }
+  // Fallback (weeks are always 1..12, so this is belt-and-suspenders).
+  const last = PHASES[PHASES.length - 1];
+  return { name: last.name, focus: last.focus };
+}
+
+// isBlockComplete(date, bankedCount) -> true when the block is finished.
+// Two triggers, whichever comes first: 36 banked lift sessions, OR the local
+// date has reached the block-complete date (2026-10-04). bankedCount is the
+// A/B/C count only (mobility excluded).
+function isBlockComplete(date, bankedCount) {
+  if (bankedCount >= SESSIONS_TO_COMPLETE) return true;
+  const cutoff = makeLocalDate(BLOCK_COMPLETE_DATE.year, BLOCK_COMPLETE_DATE.month, BLOCK_COMPLETE_DATE.day);
+  return daysBetween(cutoff, date) >= 0; // date is on/after the cutoff
+}
+
+// === PURE LOGIC END ===
+
+
+/* ============================================================
+   IMPURE HELPERS
+   Everything below may touch the DOM, localStorage, and the URL.
+   ============================================================ */
+
+// --- localStorage keys ---
+const KEY_SESSIONS = "bulkday.sessions"; // array of {date, type} in completion order
+const KEY_ACTIVE = "bulkday.active";     // {type, checked:[indices]} for the in-progress session
+
+// Read + parse a localStorage value, returning a fallback on ANY problem
+// (missing key, corrupt JSON, wrong shape). The app must never crash on
+// storage; a bad value is treated as "nothing saved yet".
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(KEY_SESSIONS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Keep only well-formed entries; ignore anything malformed.
+    return parsed.filter(function (s) {
+      return s && typeof s.date === "string" &&
+             (s.type === "A" || s.type === "B" || s.type === "C" || s.type === "mobility");
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+function loadActive() {
+  try {
+    const raw = localStorage.getItem(KEY_ACTIVE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.type !== "string" || !Array.isArray(parsed.checked)) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSessions(sessions) {
+  try { localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions)); } catch (e) {}
+}
+
+function saveActive(active) {
+  try {
+    if (active) localStorage.setItem(KEY_ACTIVE, JSON.stringify(active));
+    else localStorage.removeItem(KEY_ACTIVE);
+  } catch (e) {}
+}
+
+// Format a Date as "YYYY-MM-DD" using LOCAL getters. We deliberately do NOT
+// use toISOString(), which converts to UTC and can print yesterday's date.
+function localDateString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + d;
+}
+
+// --- URL query overrides (for previewing any state; never persisted) ---
+// ?day=tue  -> force the day type    (mon/tue/.../sun, or lift/mobility/rest)
+// ?week=9   -> force the week number (1..12)
+// ?banked=14-> force the banked count shown in the grid + block-complete check
+function readOverrides() {
+  const params = new URLSearchParams(window.location.search);
+  const overrides = {};
+
+  if (params.has("day")) {
+    overrides.day = normalizeDayParam(params.get("day"));
+  }
+  if (params.has("week")) {
+    const w = parseInt(params.get("week"), 10);
+    if (!isNaN(w)) overrides.week = Math.max(1, Math.min(PROGRAM_WEEKS, w));
+  }
+  if (params.has("banked")) {
+    const b = parseInt(params.get("banked"), 10);
+    if (!isNaN(b)) overrides.banked = Math.max(0, b);
+  }
+  return overrides;
+}
+
+// Turn a ?day= value into a "lift" | "mobility" | "rest" day type.
+// Accepts weekday names (mon, tue, ...) or the type names directly.
+function normalizeDayParam(value) {
+  const v = String(value).toLowerCase().slice(0, 3);
+  const liftDays = ["mon", "wed", "fri"];
+  if (liftDays.indexOf(v) !== -1) return "lift";
+  if (v === "sat") return "mobility";
+  if (["sun", "tue", "thu"].indexOf(v) !== -1) return "rest";
+  // Allow passing the type name straight through.
+  if (v === "lif") return "lift";
+  if (v === "mob") return "mobility";
+  if (v === "res") return "rest";
+  return null;
+}
+
+// A short label for the NEXT session (used in rest-day previews).
+function sessionTitle(type) {
+  if (type === "mobility") return MOBILITY.title;
+  return WORKOUTS[type].title;
+}
+
+
+/* ============================================================
+   BANKING
+   ============================================================ */
+
+// After banking, the very next render shows that session's coach note once,
+// then forgets it. We stash the just-banked type here (module-level) instead of
+// re-deriving it from the rotation — the rotation has ALREADY advanced by then,
+// so it no longer points at the workout that was actually completed.
+let justBankedType = null;
+
+// Bank one session: append {date, type} to the sessions list, clear the
+// in-progress checkbox state, and re-render. Idempotent per day+type: if a
+// session of this type was already banked today, a second tap does nothing
+// (guards against a double-tap banking twice).
+function bankSession(type) {
+  const today = localDateString(getEffectiveDate());
+  const sessions = loadSessions();
+
+  const alreadyBankedToday = sessions.some(function (s) {
+    return s.date === today && s.type === type;
+  });
+  if (alreadyBankedToday) return;
+
+  sessions.push({ date: today, type: type });
+  saveSessions(sessions);
+  saveActive(null);       // the session is done; drop its checkbox state
+  justBankedType = type;  // the next render shows this session's coach note
+  render();
+}
+
+// Toggle one exercise's checkbox in the in-progress session and persist it,
+// so a mid-workout app switch (to a timer, say) doesn't lose progress.
+// If the active record is for a different session type than the one on screen,
+// we start fresh — you can't carry checks from A into B.
+function toggleCheck(sessionType, index, isChecked) {
+  let active = loadActive();
+  if (!active || active.type !== sessionType) {
+    active = { type: sessionType, checked: [] };
+  }
+  const set = new Set(active.checked);
+  if (isChecked) set.add(index);
+  else set.delete(index);
+  active.checked = Array.from(set).sort(function (a, b) { return a - b; });
+  saveActive(active);
+}
+
+// Which checkbox indices are currently ticked for this session type?
+// If a record is stored for a DIFFERENT type than the one on screen, the
+// rotation has moved on (or a new day started) and the record is stale — drop
+// it here so last week's checkmarks can never reappear. (Spec: active is
+// cleared on bank OR when its type no longer matches the next session.)
+function checkedIndicesFor(sessionType) {
+  const active = loadActive();
+  if (active && active.type === sessionType) return new Set(active.checked);
+  if (active) saveActive(null);
+  return new Set();
+}
+
+
+/* ============================================================
+   STATE ASSEMBLY
+   Combine the real local date with any query overrides into the
+   single "state" object every render function reads from.
+   ============================================================ */
+
+// The real device-local date. Wrapped in a function so visibilitychange
+// re-reads it (an app left open overnight sees the new day).
+function getEffectiveDate() {
+  return new Date();
+}
+
+function computeState() {
+  const overrides = readOverrides();
+  const now = getEffectiveDate();
+
+  // Sessions from storage give us the real banked count and next lift.
+  const sessions = loadSessions();
+  const realBanked = liftCount(sessions);
+
+  // Day type, week, and banked count each fall back to the real computed
+  // value unless an override is present. Overrides are view-only.
+  const day = overrides.day || dayType(now);
+  const week = overrides.week || weekNumber(now);
+  const banked = (overrides.banked !== undefined) ? overrides.banked : realBanked;
+
+  // Mobility dot count (its own row) — never overridden, purely from storage.
+  const mobilityBanked = sessions.filter(function (s) { return s.type === "mobility"; }).length;
+
+  return {
+    now: now,
+    sessions: sessions,
+    day: day,               // "lift" | "mobility" | "rest"
+    week: week,             // 1..12
+    banked: banked,         // A/B/C count shown in the grid
+    mobilityBanked: mobilityBanked,
+    nextLift: nextLiftType(sessions),
+    phase: phaseFor(week),
+    blockComplete: isBlockComplete(now, banked),
+    isOverridden: Object.keys(overrides).length > 0
+  };
+}
+
+
+/* ============================================================
+   RENDERING
+   Small builder helpers keep the markup readable and safe: we set
+   textContent (never innerHTML) for any dynamic string, so plan text
+   can't accidentally be interpreted as HTML.
+   ============================================================ */
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// ---- Phase banner (always visible) ----
+function renderPhaseBanner(state) {
+  const mount = document.getElementById("phase-banner");
+  mount.innerHTML = "";
+
+  const banner = el("div", "phase-banner");
+  banner.appendChild(el("div", "week", "Week " + state.week + " of " + PROGRAM_WEEKS));
+
+  const focus = el("div", "focus");
+  focus.appendChild(el("span", "phase-name", state.phase.name + ": "));
+  focus.appendChild(document.createTextNode(state.phase.focus));
+  banner.appendChild(focus);
+
+  mount.appendChild(banner);
+}
+
+// ---- Dot grid (always visible): 36 lift dots + a mobility row ----
+function renderGrid(state) {
+  const mount = document.getElementById("grid");
+  mount.innerHTML = "";
+
+  const card = el("div", "grid-card");
+
+  const label = el("div", "grid-label");
+  label.appendChild(document.createTextNode("Sessions banked: "));
+  label.appendChild(el("strong", null, state.banked + " of " + SESSIONS_TO_COMPLETE));
+  card.appendChild(label);
+
+  // 36 dots; the first `banked` are filled. Empty = "not yet".
+  const dots = el("div", "dots");
+  for (let i = 0; i < SESSIONS_TO_COMPLETE; i++) {
+    dots.appendChild(el("div", i < state.banked ? "dot filled" : "dot"));
+  }
+  card.appendChild(dots);
+
+  // Optional mobility row (12 dots) under the main grid.
+  card.appendChild(el("div", "mobility-row-label", "Mobility days"));
+  const mob = el("div", "dots mobility");
+  for (let i = 0; i < PROGRAM_WEEKS; i++) {
+    mob.appendChild(el("div", i < state.mobilityBanked ? "dot filled" : "dot"));
+  }
+  card.appendChild(mob);
+
+  mount.appendChild(card);
+}
+
+// ---- Build one exercise row (shared by lift + mobility) ----
+function exerciseRow(item, index, sessionType, checkedSet, onToggle) {
+  // Pair styling: 1a/2a get a bottom-flat edge, 1b/2b tuck under them.
+  let cls = "exercise";
+  if (item.pair && item.pair.endsWith("a")) cls += " pair-a";
+  if (item.pair && item.pair.endsWith("b")) cls += " pair-b";
+
+  const row = el("div", cls);
+  row.appendChild(el("div", "tag", item.pair || "•"));
+
+  const body = el("div", "body");
+  body.appendChild(el("div", "name", item.name));
+  body.appendChild(el("div", "scheme", item.scheme));
+  row.appendChild(body);
+
+  // A large label wraps the checkbox for an easy tap target.
+  const labelEl = el("label", "check");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = checkedSet.has(index);
+  box.addEventListener("change", function () { onToggle(index, box.checked); });
+  labelEl.appendChild(box);
+  row.appendChild(labelEl);
+
+  return row;
+}
+
+// ---- Lift day (and the "Train anyway" path) ----
+// bankedType is set only on the render right after a lift is banked: we then
+// show THAT workout's card (with its coach note) instead of jumping the
+// rotation forward to the next one.
+function renderLiftCard(state, bankedType) {
+  const mount = document.getElementById("main");
+  mount.innerHTML = "";
+
+  const type = bankedType || state.nextLift; // just-banked workout, else next in rotation
+  const workout = WORKOUTS[type];
+  const checkedSet = checkedIndicesFor(type);
+
+  const card = el("div", "card");
+  card.appendChild(el("h2", null, workout.title));
+  card.appendChild(el("p", "subhead", "Supersets: do the 'a', rest ~30s, do the 'b', rest ~60s, repeat."));
+
+  // Friday is a lift day, so the weigh-in nudge belongs here. Keyed off the
+  // REAL weekday (never an override) so it only fires on an actual Friday.
+  if (state.now.getDay() === 5) {
+    card.appendChild(el("div", "chip", "Weigh-in day — log it in the vault note"));
+  }
+
+  // Re-render the button state whenever a box is toggled.
+  function onToggle(index, isChecked) {
+    toggleCheck(type, index, isChecked);
+    refreshDoneButton();
+  }
+
+  workout.exercises.forEach(function (item, index) {
+    card.appendChild(exerciseRow(item, index, type, checkedSet, onToggle));
+  });
+
+  // The carry finisher is not a checkbox exercise; it's the closer.
+  const fin = el("div", "finisher");
+  fin.appendChild(el("div", "tag", "Finisher"));
+  const finBody = el("div", "body");
+  finBody.appendChild(el("div", "name", workout.finisher.name));
+  finBody.appendChild(el("div", "scheme", workout.finisher.scheme));
+  fin.appendChild(finBody);
+  card.appendChild(fin);
+
+  // "Session done" appears enabled only when every exercise box is checked.
+  const doneBtn = el("button", "btn btn-done", "Session done");
+  doneBtn.addEventListener("click", function () {
+    if (allChecked()) bankSession(type);
+  });
+  card.appendChild(doneBtn);
+
+  // A place to drop the coach note after banking (filled by bankSession→render;
+  // shown here only on the render immediately after a bank of THIS type today).
+  if (bankedType) {
+    card.appendChild(coachNoteNode(state.phase.name));
+  }
+
+  mount.appendChild(card);
+
+  // --- little helpers scoped to this card ---
+  function allChecked() {
+    return checkedIndicesFor(type).size === workout.exercises.length;
+  }
+  function refreshDoneButton() {
+    doneBtn.disabled = !allChecked();
+  }
+  function coachNoteNode(phaseName) {
+    const notes = COACH_NOTES[phaseName] || COACH_NOTES.Groove;
+    const line = notes[Math.floor(Math.random() * notes.length)];
+    const box = el("div", "coach");
+    box.appendChild(el("span", "who", "Coach"));
+    box.appendChild(document.createTextNode(line));
+    return box;
+  }
+
+  refreshDoneButton(); // set initial enabled/disabled state
+}
+
+// ---- Mobility day ----
+// bankedType is set only on the render right after mobility is banked, so the
+// coach note shows once (same one-shot pattern as the lift card).
+function renderMobilityCard(state, bankedType) {
+  const mount = document.getElementById("main");
+  mount.innerHTML = "";
+
+  const type = "mobility";
+  const checkedSet = checkedIndicesFor(type);
+
+  const card = el("div", "card");
+  card.appendChild(el("h2", null, MOBILITY.title));
+  card.appendChild(el("p", "subhead", MOBILITY.subhead));
+
+  function onToggle(index, isChecked) {
+    toggleCheck(type, index, isChecked);
+    refreshDoneButton();
+  }
+
+  MOBILITY.movements.forEach(function (name, index) {
+    const item = { pair: null, name: name, scheme: MOBILITY.movementScheme };
+    card.appendChild(exerciseRow(item, index, type, checkedSet, onToggle));
+  });
+
+  // Conditioning is the mobility "finisher".
+  const fin = el("div", "finisher");
+  fin.appendChild(el("div", "tag", "Cardio"));
+  const finBody = el("div", "body");
+  finBody.appendChild(el("div", "name", "Easy conditioning"));
+  finBody.appendChild(el("div", "scheme", MOBILITY.conditioning));
+  fin.appendChild(finBody);
+  card.appendChild(fin);
+
+  const doneBtn = el("button", "btn btn-done", "Mobility done");
+  doneBtn.addEventListener("click", function () {
+    if (allChecked()) bankSession(type);
+  });
+  card.appendChild(doneBtn);
+
+  if (bankedType) {
+    const box = el("div", "coach");
+    box.appendChild(el("span", "who", "Coach"));
+    box.appendChild(document.createTextNode("Banked. Mobility is the work that lets you keep doing the work. Well spent."));
+    card.appendChild(box);
+  }
+
+  // Saturday is a non-lift day, so it gets the same "Train anyway" path as the
+  // rest-day card: pull the next A→B→C session forward (e.g. after a missed Friday).
+  const trainLink = el("button", "train-anyway", "Feeling good? Train anyway →");
+  trainLink.addEventListener("click", function () {
+    renderLiftCard(state);
+  });
+  card.appendChild(trainLink);
+
+  mount.appendChild(card);
+
+  function allChecked() {
+    return checkedIndicesFor(type).size === MOBILITY.movements.length;
+  }
+  function refreshDoneButton() {
+    doneBtn.disabled = !allChecked();
+  }
+  refreshDoneButton();
+}
+
+// ---- Rest day (no completion mechanics) ----
+function renderRestCard(state) {
+  const mount = document.getElementById("main");
+  mount.innerHTML = "";
+
+  const card = el("div", "card");
+  card.appendChild(el("h2", null, "Rest day"));
+  card.appendChild(el("p", "subhead", "Recovery is when the growth happens. The one job today is the food."));
+
+  // Nutrition front and center.
+  const macros = el("div", "macros");
+  const cal = el("div", "macro");
+  cal.appendChild(el("div", "num", NUTRITION.calories));
+  cal.appendChild(el("div", "unit", "calories"));
+  macros.appendChild(cal);
+  const pro = el("div", "macro");
+  pro.appendChild(el("div", "num", NUTRITION.protein));
+  pro.appendChild(el("div", "unit", "protein"));
+  macros.appendChild(pro);
+  card.appendChild(macros);
+
+  card.appendChild(el("p", "preview-line", "Rhythm: breakfast → lunch → shake → dinner → optional pre-bed snack. Eat every 3–4 hours."));
+
+  // Preview the next session so the rest day still points forward.
+  const preview = el("p", "preview-line");
+  preview.appendChild(document.createTextNode("Next up: "));
+  preview.appendChild(el("strong", null, sessionTitle(state.nextLift)));
+  card.appendChild(preview);
+
+  // Friday: a weigh-in chip. Note we key this off the REAL weekday, not an
+  // override — the reminder should only nudge on an actual Friday.
+  if (state.now.getDay() === 5) {
+    card.appendChild(el("div", "chip", "Weigh-in day — log it in the vault note"));
+  }
+
+  // "Train anyway" reveals the same next-in-sequence lift card (extra-day path).
+  const trainLink = el("button", "train-anyway", "Feeling good? Train anyway →");
+  trainLink.addEventListener("click", function () {
+    renderLiftCard(state);
+  });
+  card.appendChild(trainLink);
+
+  mount.appendChild(card);
+}
+
+// ---- Block complete (end of the 12 weeks) ----
+function renderBlockComplete(state) {
+  const mount = document.getElementById("main");
+  mount.innerHTML = "";
+
+  const card = el("div", "card");
+  card.appendChild(el("h2", null, "Block complete 🎉"));
+  card.appendChild(el("p", "subhead", "Twelve weeks banked. This is the test-and-measure step — then we plan phase two."));
+
+  card.appendChild(el("div", "section-title", "Week-12 test checklist"));
+  const list = el("ul", "plain");
+  list.appendChild(el("li", null, "Max push-up test — one all-out set, write the number down."));
+  list.appendChild(el("li", null, "Weigh in — same conditions as every Friday."));
+  list.appendChild(el("li", null, "Progress photos — front, side, back."));
+  card.appendChild(list);
+
+  card.appendChild(el("div", "section-title", "Next"));
+  card.appendChild(el("p", "preview-line", "Log the numbers in the vault note, then open Claude and ask it to build Phase 2 (the road to 175). Nothing loops here on its own — you decide when the next block starts."));
+
+  mount.appendChild(card);
+}
+
+// ---- Reference section (collapsible, always at the bottom) ----
+function renderReference() {
+  const mount = document.getElementById("reference");
+  mount.innerHTML = "";
+
+  mount.appendChild(el("div", "section-title", "Reference"));
+  const wrap = el("div", "reference");
+
+  wrap.appendChild(refDetails("Nutrition targets", function (body) {
+    body.appendChild(makeP("Daily: ", NUTRITION.calories + " calories · " + NUTRITION.protein + " protein."));
+    body.appendChild(makeP("", "Breakfast every day (eggs + toast + banana + milk, OR overnight oats). Existing lunch and dinner stay; add rice/potatoes or olive oil to dinner."));
+  }));
+
+  wrap.appendChild(refDetails("Hard-gainer shake", function (body) {
+    body.appendChild(makeP("", NUTRITION.shake));
+  }));
+
+  wrap.appendChild(refDetails("Grocery staples", function (body) {
+    body.appendChild(makeP("", NUTRITION.groceries));
+  }));
+
+  wrap.appendChild(refDetails("Double-progression rule", function (body) {
+    body.appendChild(makeP("", NUTRITION.doubleProgression));
+  }));
+
+  wrap.appendChild(refDetails("Weigh-in adjustment rules", function (body) {
+    const ul = el("ul");
+    NUTRITION.weighIn.forEach(function (line) { ul.appendChild(el("li", null, line)); });
+    body.appendChild(ul);
+  }));
+
+  mount.appendChild(wrap);
+
+  // --- helpers ---
+  function refDetails(summaryText, fillBody) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = summaryText;
+    details.appendChild(summary);
+    const body = el("div", "ref-body");
+    fillBody(body);
+    details.appendChild(body);
+    return details;
+  }
+  function makeP(boldPart, rest) {
+    const p = document.createElement("p");
+    if (boldPart) p.appendChild(el("strong", null, boldPart));
+    p.appendChild(document.createTextNode(rest));
+    return p;
+  }
+}
+
+
+/* ============================================================
+   TOP-LEVEL RENDER + WIRING
+   ============================================================ */
+
+function render() {
+  const state = computeState();
+
+  // Consume the just-banked flag: it drives the coach note on THIS render only,
+  // then clears so the next render advances to the upcoming session.
+  const bankedType = justBankedType;
+  justBankedType = null;
+
+  // Always-visible chrome.
+  renderPhaseBanner(state);
+  renderGrid(state);
+  renderReference();
+
+  // The main card: block-complete wins over everything; then, if we just
+  // banked, show that session's card (with its coach note); otherwise day type.
+  if (state.blockComplete) {
+    renderBlockComplete(state);
+  } else if (bankedType === "mobility") {
+    renderMobilityCard(state, bankedType);
+  } else if (bankedType) {
+    renderLiftCard(state, bankedType);
+  } else if (state.day === "lift") {
+    renderLiftCard(state);
+  } else if (state.day === "mobility") {
+    renderMobilityCard(state);
+  } else {
+    renderRestCard(state);
+  }
+}
+
+// First paint.
+render();
+
+// Re-render when the app comes back to the foreground. If it was left open
+// overnight, "today" has changed and the right card should now show.
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible") render();
+});
+
+// Register the service worker (the offline/installable layer).
+// scope "./" keeps it confined to /bulking-pwa/ — the correct scope for a
+// GitHub Pages project site. A missing/failed registration just means no
+// offline support; the app still works online, so we swallow the error.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(function () {});
+  });
+}
+</script>
