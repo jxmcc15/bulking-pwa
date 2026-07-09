@@ -4,42 +4,43 @@
 <title>Bulk Day</title>
 
 <!--
-  Bulk Day — the whole app in one file.
-  Structure of this file, top to bottom:
-    1. head tags below (viewport, theme color, iOS install hints, manifest)
-    2. a style block — all the CSS, dark theme, sized for arm's-length reading
-    3. a few empty containers in the body that the JS fills in
-    4. one script — the plan data, the pure logic, then rendering + wiring
+  Bulk Day v2 — "The Locker Room". The whole app in one file.
 
-  This is a PWA (Progressive Web App): a normal web page plus a manifest and a
-  service worker, which together let you install it to the iPhone home screen
-  and run it offline. No frameworks, no build step — just this file.
+  Table of contents (top to bottom):
+    1. head tags (viewport, theme color, iOS install hints, manifest)
+    2. a <style> block — all CSS, dark theme, sized for arm's-length reading
+    3. a few empty containers in the body that the JS fills in
+    4. one <script>, in order:
+         PLAN DATA          — the program (workouts, nutrition) + coach event lines
+         PURE LOGIC block    — pure functions of (sessions, date): dates, sequence,
+                               flame/heat, XP, levels, badges, deterministic coach lines.
+                               A node test harness extracts THIS block and runs it, so it
+                               must stay valid standalone JS with no DOM/localStorage.
+         IMPURE HELPERS      — storage, URL overrides, banking, Web Audio clank
+         STATE ASSEMBLY      — real date + overrides -> one state object
+         RENDERING           — tabs, phase banner + flame, Today tab, Locker Room tab,
+                               toasts / overlays / confetti
+         TOP-LEVEL render + wiring + service-worker registration
+
+  This is a PWA: a normal web page plus a manifest and a service worker, which
+  together let you install it to the iPhone home screen and run it offline.
+  No frameworks, no build step, no minification — just this file.
 -->
 
-<!-- The viewport tag makes the page size to the phone screen instead of a
-     zoomed-out desktop layout. Without it a phone renders at ~980px wide. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-
-<!-- theme-color tints the iOS status bar / Android toolbar to match the app. -->
 <meta name="theme-color" content="#0d1117">
 
-<!-- Hints so "Add to Home Screen" launches full-screen (standalone),
-     not inside a browser tab with the address bar. The first is the standard
-     name (Android/Chrome); the apple-* ones are what iOS actually reads. -->
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Bulk Day">
 
-<!-- The manifest describes the installed app (name, colors, icon). Relative
-     path because the site lives under /bulking-pwa/, not the domain root. -->
+<!-- Relative paths everywhere: the site serves from /bulking-pwa/, not the root. -->
 <link rel="manifest" href="./manifest.json">
-
-<!-- iOS ignores the manifest icon and uses this one for the home-screen tile. -->
 <link rel="apple-touch-icon" href="./icon-512.png">
 
 <style>
-  /* ---- Theme tokens (colors used everywhere, named once) ---- */
+  /* ---- Theme tokens (colors named once) ---- */
   :root {
     --bg: #0d1117;          /* page background, near-black */
     --panel: #161b22;       /* cards sit slightly above the background */
@@ -47,35 +48,68 @@
     --border: #2a323d;      /* hairline borders */
     --text: #e6edf3;        /* primary text */
     --muted: #9aa7b4;       /* secondary text */
-    --accent: #58a6ff;      /* blue — the one highlight color */
+    --accent: #58a6ff;      /* blue — the one cool highlight */
     --accent-dim: #1f3a5f;  /* filled dots, quiet accent fills */
-    --good: #3fb950;        /* green — used ONLY for "banked / done" positives */
+    --good: #3fb950;        /* green — ONLY for "banked / done" positives */
+    --flame: #f0a94c;       /* warm amber for the momentum flame + XP (never red) */
+    --flame-dim: #3a2f1c;   /* flame card wash */
+    --gold: #e3b341;        /* earned-badge glow */
   }
 
   * { box-sizing: border-box; }
-
   html { -webkit-text-size-adjust: 100%; }
 
   body {
     margin: 0;
-    /* System font stack — no web fonts to download, works offline. */
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                  Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.45;
-    /* Respect the iPhone notch / home-indicator safe areas. */
     padding: env(safe-area-inset-top) env(safe-area-inset-right)
              env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 
   .wrap {
-    max-width: 560px;      /* comfortable single column on phone and desktop */
+    max-width: 560px;
     margin: 0 auto;
-    padding: 20px 16px 48px;
+    padding: 14px 16px 48px;
   }
 
-  /* ---- Phase banner (always visible at the top) ---- */
+  /* ---- Tab bar (Today | Locker Room) ---- */
+  .tabs {
+    display: flex;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 14px;
+    position: sticky;
+    top: 6px;
+    z-index: 5;
+  }
+  .tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 10px 8px;
+    border-radius: 9px;
+    cursor: pointer;
+    text-decoration: none;
+    text-align: center;
+  }
+  .tab.active {
+    background: var(--panel-2);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  /* ---- Phase banner (always visible, both tabs) ---- */
   .phase-banner {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -83,6 +117,8 @@
     padding: 14px 16px;
     margin-bottom: 16px;
   }
+  .banner-top { display: flex; align-items: flex-start; gap: 12px; }
+  .banner-top .left { flex: 1 1 auto; min-width: 0; }
   .phase-banner .week {
     font-size: 13px;
     letter-spacing: 0.04em;
@@ -90,279 +126,298 @@
     color: var(--accent);
     font-weight: 700;
   }
-  .phase-banner .focus {
-    font-size: 17px;
-    margin-top: 4px;
-    color: var(--text);
-  }
+  .phase-banner .focus { font-size: 17px; margin-top: 4px; color: var(--text); }
   .phase-banner .focus .phase-name { font-weight: 700; }
+  .tappable { cursor: pointer; }
 
-  /* ---- The dot grid (banked sessions) ---- */
-  .grid-card {
+  /* The flame lives at the right of the banner; size scales with heat. */
+  .flame {
+    flex: 0 0 auto;
+    text-align: center;
+    cursor: pointer;
+    line-height: 1;
+    user-select: none;
+    padding: 2px 4px;
+    border-radius: 10px;
+  }
+  .flame .glyph { display: block; filter: grayscale(1) brightness(0.8); }
+  .flame.heat-1 .glyph, .flame.heat-2 .glyph,
+  .flame.heat-3 .glyph, .flame.heat-4 .glyph { filter: none; }
+  .flame.heat-0 .glyph { font-size: 20px; }
+  .flame.heat-1 .glyph { font-size: 20px; opacity: 0.75; }
+  .flame.heat-2 .glyph { font-size: 26px; }
+  .flame.heat-3 .glyph { font-size: 32px; }
+  .flame.heat-4 .glyph { font-size: 36px; filter: drop-shadow(0 0 6px var(--flame)); }
+  .flame .flame-name {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--flame);
+    font-weight: 700;
+    margin-top: 2px;
+  }
+  .flame.heat-0 .flame-name { color: var(--muted); }
+  @keyframes flame-up { 0%{ transform: scale(1);} 40%{ transform: scale(1.35);} 100%{ transform: scale(1);} }
+  .flame.rose .glyph { animation: flame-up 0.6s ease; }
+
+  /* Coach line of the day (below the focus line). */
+  .coach-line {
+    margin-top: 10px;
+    font-size: 15px;
+    color: var(--text);
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .coach-line .who {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--flame);
+    font-weight: 700;
+    margin-bottom: 3px;
+  }
+  @keyframes banner-glow { 0%,100%{ box-shadow: 0 0 0 0 rgba(240,169,76,0);} 50%{ box-shadow: 0 0 22px 2px rgba(240,169,76,0.55);} }
+  .phase-banner.glow { animation: banner-glow 2.4s ease 2; }
+
+  /* ---- Dot grid ---- */
+  .grid-card, .card, .level-card, .flame-card, .badge-card, .share-card {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 14px;
     padding: 16px;
     margin-bottom: 16px;
   }
-  .grid-label {
-    font-size: 15px;
-    color: var(--muted);
-    margin-bottom: 10px;
-  }
+  .grid-label { font-size: 15px; color: var(--muted); margin-bottom: 10px; }
   .grid-label strong { color: var(--text); font-weight: 700; }
-
-  .dots {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    gap: 8px;
-  }
+  .dots { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
   .dot {
     aspect-ratio: 1 / 1;
     border-radius: 50%;
     background: transparent;
     border: 2px solid var(--border);   /* empty = "not yet", never a warning */
   }
-  .dot.filled {
-    background: var(--good);
-    border-color: var(--good);
-  }
-  .dots.mobility .dot.filled {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  .mobility-row-label {
-    font-size: 13px;
-    color: var(--muted);
-    margin: 16px 0 8px;
-  }
+  .dot.filled { background: var(--good); border-color: var(--good); }
+  .dots.mobility .dot.filled { background: var(--accent); border-color: var(--accent); }
+  .mobility-row-label { font-size: 13px; color: var(--muted); margin: 16px 0 8px; }
+  @keyframes dot-pop { 0%{ transform: scale(0.2); } 60%{ transform: scale(1.25);} 100%{ transform: scale(1);} }
+  .dot.pop { animation: dot-pop 0.45s ease; }
 
-  /* ---- Generic card used by every screen's main content ---- */
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 18px 16px;
-    margin-bottom: 16px;
-  }
-  .card h2 {
-    margin: 0 0 4px;
-    font-size: 22px;
-  }
-  .card .subhead {
-    color: var(--muted);
-    font-size: 15px;
-    margin: 0 0 16px;
-  }
+  /* ---- Generic card ---- */
+  .card h2 { margin: 0 0 4px; font-size: 22px; }
+  .card .subhead { color: var(--muted); font-size: 15px; margin: 0 0 16px; }
+  .title-row { display: flex; align-items: baseline; gap: 8px; }
+  .title-row .hint { font-size: 13px; color: var(--accent); flex: 0 0 auto; }
 
-  /* ---- Exercise table (lift + mobility) ---- */
-  .exercise {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 12px;
+  /* Inline explainer under a tapped title. */
+  .title-explainer {
+    background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 12px;
-    background: var(--panel-2);
-    margin-bottom: 8px;
+    padding: 12px 14px;
+    margin: 0 0 14px;
+    font-size: 14px;
+    color: var(--muted);
   }
-  /* Superset partners share a visual group: 1a sits directly on top of 1b. */
+  .title-explainer strong { color: var(--text); }
+
+  /* ---- Exercise table ---- */
+  .exercise {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--panel-2); margin-bottom: 8px;
+  }
   .exercise.pair-b { margin-top: -8px; border-top-left-radius: 0; border-top-right-radius: 0; }
   .exercise.pair-a { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-
   .exercise .tag {
-    flex: 0 0 auto;
-    min-width: 30px;
-    text-align: center;
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border-radius: 6px;
-    padding: 3px 6px;
-    margin-top: 2px;
+    flex: 0 0 auto; min-width: 30px; text-align: center; font-size: 13px;
+    font-weight: 700; color: var(--accent); background: var(--accent-dim);
+    border-radius: 6px; padding: 3px 6px; margin-top: 2px;
   }
   .exercise .body { flex: 1 1 auto; min-width: 0; }
   .exercise .name { font-size: 16px; font-weight: 600; }
   .exercise .scheme { font-size: 14px; color: var(--muted); margin-top: 2px; }
-
-  /* The checkbox is a big tap target — easy to hit with a sweaty thumb. */
   .exercise label.check {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    cursor: pointer;
-    margin: -6px -4px -6px 0;
+    flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; cursor: pointer; margin: -6px -4px -6px 0;
   }
-  .exercise input[type="checkbox"] {
-    width: 26px;
-    height: 26px;
-    accent-color: var(--good);
-  }
+  .exercise input[type="checkbox"] { width: 26px; height: 26px; accent-color: var(--good); }
 
   .finisher {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px;
-    border: 1px dashed var(--border);
-    border-radius: 12px;
-    margin-top: 4px;
+    display: flex; align-items: center; gap: 12px; padding: 12px;
+    border: 1px dashed var(--border); border-radius: 12px; margin-top: 4px;
   }
   .finisher .tag {
-    flex: 0 0 auto;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--muted);
+    flex: 0 0 auto; font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--muted);
   }
 
   /* ---- Buttons ---- */
   .btn {
-    display: block;
-    width: 100%;
-    border: none;
-    border-radius: 12px;
-    padding: 16px;
-    font-size: 17px;
-    font-weight: 700;
-    cursor: pointer;
-    margin-top: 12px;
-    font-family: inherit;
+    display: block; width: 100%; border: none; border-radius: 12px; padding: 16px;
+    font-size: 17px; font-weight: 700; cursor: pointer; margin-top: 12px; font-family: inherit;
   }
-  .btn-done {
-    background: var(--good);
-    color: #06210c;
-  }
-  .btn-done:disabled {
-    background: var(--panel-2);
-    color: var(--muted);
-    cursor: default;
+  .btn-done { background: var(--good); color: #06210c; }
+  .btn-done:disabled { background: var(--panel-2); color: var(--muted); cursor: default; }
+  .btn-secondary {
+    background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border);
   }
 
-  /* ---- Coach note (the reward after banking) ---- */
+  /* ---- Coach event note (after banking) ---- */
   .coach {
-    background: var(--accent-dim);
-    border: 1px solid var(--accent);
-    border-radius: 12px;
-    padding: 14px 16px;
-    margin-top: 4px;
-    font-size: 16px;
-    color: var(--text);
+    background: var(--flame-dim); border: 1px solid var(--flame); border-radius: 12px;
+    padding: 14px 16px; margin-top: 12px; font-size: 16px; color: var(--text);
   }
+  .coach.sincere { background: var(--accent-dim); border-color: var(--accent); }
   .coach .who {
-    display: block;
-    font-size: 12px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--accent);
-    font-weight: 700;
-    margin-bottom: 4px;
+    display: block; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--flame); font-weight: 700; margin-bottom: 4px;
+  }
+  .coach.sincere .who { color: var(--accent); }
+
+  /* XP tick that floats up on bank. */
+  @keyframes xp-rise { 0%{ opacity: 0; transform: translateY(6px) scale(0.9);} 20%{ opacity: 1;} 100%{ opacity: 0; transform: translateY(-26px) scale(1.1);} }
+  .xp-tick {
+    position: fixed; left: 50%; top: 42%; transform: translateX(-50%);
+    font-size: 30px; font-weight: 800; color: var(--flame); z-index: 50;
+    pointer-events: none; animation: xp-rise 1.1s ease forwards;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6);
   }
 
-  /* ---- Nutrition block (rest day) ---- */
-  .macros {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 8px;
-  }
+  /* ---- Nutrition block ---- */
+  .macros { display: flex; gap: 12px; margin-bottom: 8px; }
   .macro {
-    flex: 1;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px;
-    text-align: center;
+    flex: 1; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; text-align: center;
   }
   .macro .num { font-size: 26px; font-weight: 800; color: var(--text); }
   .macro .unit { font-size: 13px; color: var(--muted); margin-top: 2px; }
-
-  .preview-line {
-    font-size: 15px;
-    color: var(--muted);
-    margin-top: 12px;
-  }
+  .preview-line { font-size: 15px; color: var(--muted); margin-top: 12px; }
   .preview-line strong { color: var(--text); }
 
   /* ---- Chips + small links ---- */
   .chip {
-    display: inline-block;
-    background: var(--accent-dim);
-    border: 1px solid var(--accent);
-    color: var(--text);
-    border-radius: 999px;
-    padding: 8px 14px;
-    font-size: 14px;
-    font-weight: 600;
-    margin-top: 4px;
+    display: inline-block; background: var(--accent-dim); border: 1px solid var(--accent);
+    color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: 14px;
+    font-weight: 600; margin-top: 4px;
   }
-  .train-anyway {
-    display: inline-block;
-    margin-top: 14px;
-    color: var(--accent);
-    font-size: 15px;
-    text-decoration: underline;
-    cursor: pointer;
-    background: none;
-    border: none;
-    font-family: inherit;
-    padding: 0;
+  .train-anyway, .link-btn {
+    display: inline-block; margin-top: 14px; color: var(--accent); font-size: 15px;
+    text-decoration: underline; cursor: pointer; background: none; border: none;
+    font-family: inherit; padding: 0;
   }
-
+  .ext-link { display: inline-block; margin-top: 12px; color: var(--accent); font-size: 15px; }
   ul.plain { margin: 8px 0 0; padding-left: 20px; }
   ul.plain li { margin-bottom: 4px; }
 
-  /* ---- Collapsible reference section at the bottom ---- */
-  .reference { margin-top: 8px; }
-  .reference details {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-  .reference summary {
-    padding: 14px 16px;
-    font-size: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    list-style: none;
-  }
-  .reference summary::-webkit-details-marker { display: none; }
-  .reference summary::after { content: "  +"; color: var(--muted); float: right; }
-  .reference details[open] summary::after { content: "  –"; }
-  .reference .ref-body { padding: 0 16px 16px; font-size: 15px; color: var(--muted); }
-  .reference .ref-body strong { color: var(--text); }
-  .reference .ref-body ul { margin: 6px 0; padding-left: 20px; }
+  /* ---- Level card (Locker Room) ---- */
+  .level-name { font-size: 30px; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; }
+  .level-sub { font-size: 14px; color: var(--muted); margin-top: 2px; }
+  .xp-bar { height: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
+  .xp-fill { height: 100%; background: var(--flame); border-radius: 999px; transition: width 0.5s ease; }
+  .xp-nums { font-size: 13px; color: var(--muted); }
+  .level-coach { margin-top: 12px; font-size: 15px; color: var(--text); }
+  .level-coach .who { color: var(--flame); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 3px; }
 
-  .section-title {
-    font-size: 13px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-weight: 700;
-    margin: 24px 0 8px;
+  /* ---- Flame card ---- */
+  .flame-card .heat-head { display: flex; align-items: center; gap: 12px; }
+  .flame-card .heat-glyph { font-size: 34px; line-height: 1; }
+  .flame-card .heat-name { font-size: 20px; font-weight: 800; color: var(--flame); }
+  .flame-card.heat-0 .heat-name { color: var(--muted); }
+  .flame-card.heat-0 .heat-glyph { filter: grayscale(1) brightness(0.8); }
+  .flame-card p { color: var(--muted); font-size: 15px; margin: 12px 0 0; }
+
+  /* ---- Badge wall ---- */
+  .badge-card h3, .card h3 { margin: 0 0 4px; font-size: 18px; }
+  .badge-card .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+  .badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+  .badge {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 8px; text-align: center;
   }
+  .badge .icon { font-size: 26px; line-height: 1.1; }
+  .badge .bname { font-size: 12px; font-weight: 700; margin-top: 6px; color: var(--text); }
+  .badge .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .badge.earned { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+  .badge.earned .icon { filter: drop-shadow(0 0 5px var(--gold)); }
+  .badge.locked .icon { filter: grayscale(1) brightness(0.5); opacity: 0.55; }
+  .badge.locked .bname { color: var(--muted); }
+  .badge .notyet { font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+
+  /* ---- Section blocks (Method / Mission / Fuel) ---- */
+  .section-title {
+    font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin: 24px 0 8px;
+  }
+  details.acc {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  details.acc > summary {
+    padding: 14px 16px; font-size: 16px; font-weight: 700; cursor: pointer; list-style: none;
+  }
+  details.acc > summary::-webkit-details-marker { display: none; }
+  details.acc > summary::after { content: "  +"; color: var(--muted); float: right; }
+  details.acc[open] > summary::after { content: "  \2013"; }
+  .acc-body { padding: 0 16px 16px; font-size: 15px; color: var(--muted); }
+  .acc-body strong { color: var(--text); }
+  .acc-body ul { margin: 6px 0; padding-left: 20px; }
+  .acc-body table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+  .acc-body th, .acc-body td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .acc-body th { color: var(--text); }
+  .highlight-now { color: var(--good); font-weight: 700; }
+
+  /* ---- Overlay (flame explainer) ---- */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 60;
+  }
+  .overlay-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px; max-width: 340px; text-align: center;
+  }
+  .overlay-card .big { font-size: 40px; line-height: 1; }
+  .overlay-card p { color: var(--text); font-size: 16px; margin: 14px 0 0; }
+  .overlay-card .count { color: var(--flame); font-weight: 800; }
+  .overlay-card .close { margin-top: 18px; }
+
+  /* ---- Badge toast ---- */
+  @keyframes toast-in { 0%{ opacity: 0; transform: translate(-50%, 14px);} 12%{ opacity: 1; transform: translate(-50%,0);} 88%{ opacity: 1;} 100%{ opacity: 0; transform: translate(-50%,-8px);} }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: var(--flame); color: #241a08; font-weight: 700; font-size: 15px;
+    padding: 12px 18px; border-radius: 999px; z-index: 55; max-width: 90%;
+    text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    animation: toast-in 4s ease forwards;
+  }
+
+  /* ---- Confetti (block complete) ---- */
+  .confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
+  @keyframes fall { 0%{ transform: translateY(-10vh) rotate(0);} 100%{ transform: translateY(110vh) rotate(540deg);} }
+  .confetti i {
+    position: absolute; top: -10vh; width: 9px; height: 14px; border-radius: 2px;
+    animation: fall linear forwards;
+  }
+
+  /* ---- Signed letter (block complete) ---- */
+  .letter {
+    background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 14px;
+    padding: 16px; margin-top: 14px; font-size: 15px; color: var(--text); line-height: 1.55;
+  }
+  .letter .sig { margin-top: 12px; font-weight: 700; color: var(--flame); }
 
   .footnote {
-    font-size: 13px;
-    color: var(--muted);
-    text-align: center;
-    margin-top: 28px;
-    line-height: 1.5;
+    font-size: 13px; color: var(--muted); text-align: center; margin-top: 28px; line-height: 1.5;
   }
 </style>
 
 <div class="wrap">
-  <!-- These four containers are filled in by the render functions below. -->
+  <!-- Tab bar + panels are filled/toggled by the render functions below. -->
+  <div id="tabs"></div>
   <div id="phase-banner"></div>
-  <div id="grid"></div>
-  <div id="main"></div>
-  <div id="reference"></div>
+  <div id="today"></div>
+  <div id="locker" style="display:none"></div>
+  <div id="overlay-root"></div>
   <div class="footnote">
     Bulk Day · the vault note stays the record of truth.<br>
     Weigh in Fridays; log weight there.
@@ -383,30 +438,33 @@
 const WORKOUTS = {
   A: {
     title: "Day A — Squat + Push",
+    targets: "Quads, chest, shoulders — the big push patterns.",
     exercises: [
-      { pair: "1a", name: "Bearhug squat (37.5 bag)",              scheme: "3 × 10–15" },
-      { pair: "1b", name: "Push-ups (see progression)",            scheme: "3 × 8–15" },
-      { pair: "2a", name: "Sandbag shoulder press (37.5, two hands)", scheme: "3 × 8–12" },
-      { pair: "2b", name: "Walking lunge (14 lb each hand)",       scheme: "3 × 10/leg" }
+      { pair: "1a", name: "Bearhug squat (37.5 bag)",                  scheme: "3 × 10–15" },
+      { pair: "1b", name: "Push-ups (see progression)",                scheme: "3 × 8–15" },
+      { pair: "2a", name: "Sandbag shoulder press (37.5, two hands)",  scheme: "3 × 8–12" },
+      { pair: "2b", name: "Walking lunge (14 lb each hand)",           scheme: "3 × 10/leg" }
     ],
     finisher: { name: "Bearhug carry (37.5)", scheme: "3 × 40 steps" }
   },
   B: {
     title: "Day B — Hinge + Pull",
+    targets: "Hamstrings, glutes, back — the big pull patterns.",
     exercises: [
-      { pair: "1a", name: "Sandbag RDL (37.5 each hand = 75 lb)",  scheme: "3 × 10–15" },
+      { pair: "1a", name: "Sandbag RDL (37.5 each hand = 75 lb)",      scheme: "3 × 10–15" },
       { pair: "1b", name: "Bent-over row (37.5, two hands → one arm)", scheme: "3 × 8–12" },
       { pair: "2a", name: "Sandbag clean to shoulder (37.5, alternate)", scheme: "3 × 5/side" },
-      { pair: "2b", name: "Single-leg RDL (14 lb opposite hand)",  scheme: "3 × 8/leg" }
+      { pair: "2b", name: "Single-leg RDL (14 lb opposite hand)",      scheme: "3 × 8/leg" }
     ],
     finisher: { name: "Farmer carry (37.5 each hand)", scheme: "3 × 40 steps" }
   },
   C: {
     title: "Day C — Unilateral + Arms",
+    targets: "One leg at a time, plus biceps and triceps.",
     exercises: [
       { pair: "1a", name: "Bulgarian split squat (BW → 14s → bearhug 37.5)", scheme: "3 × 8–12/leg" },
-      { pair: "1b", name: "Feet-elevated push-ups",               scheme: "3 × leave 2 in tank" },
-      { pair: "2a", name: "Step-ups (14s in hand)",               scheme: "3 × 10/leg" },
+      { pair: "1b", name: "Feet-elevated push-ups",                    scheme: "3 × leave 2 in tank" },
+      { pair: "2a", name: "Step-ups (14s in hand)",                    scheme: "3 × 10/leg" },
       { pair: "2b", name: "Biceps curls (14s) + overhead triceps ext (14)", scheme: "3 × 12–15 each" }
     ],
     finisher: { name: "Shoulder carry (37.5, switch halfway)", scheme: "3 × 40 steps" }
@@ -426,14 +484,18 @@ const MOBILITY = {
     "Down-dog ↔ cobra"
   ],
   movementScheme: "60–90s each",
-  conditioning: "20–30 min brisk walk or easy bike — conversational pace. Hard cardio burns the surplus."
+  conditioning: "20–30 min brisk walk or easy bike — conversational pace. Hard cardio burns the surplus.",
+  followAlong: { label: "Yoga with Adriene (YouTube)", url: "https://www.youtube.com/@yogawithadriene" }
 };
 
-// Nutrition targets, shown big on rest days and in the reference section.
+// Nutrition targets — shown on rest days and in the Locker Room "Fuel" section.
 const NUTRITION = {
   calories: "2,900",
   protein: "150–160 g",
+  breakfastA: "3 eggs scrambled + 2 buttered toast + banana + big glass whole milk (~750 cal / 35 g protein).",
+  breakfastB: "Overnight oats: 1 cup oats + whole milk + whey scoop + peanut butter + honey (~800 cal / 45 g). Batch 3 jars Sunday night.",
   shake: "12 oz whole milk + 2 scoops whey + banana + 2 tbsp peanut butter + ½ cup dry oats, blended (~850 cal / 60 g protein).",
+  rhythm: "breakfast → lunch → shake → dinner → optional pre-bed snack (Greek yogurt + honey, or PB toast). Eat every 3–4 hours.",
   groceries: "Eggs, whole milk, whey, oats, peanut butter, bananas, bread, Greek yogurt, microwave rice, rotisserie chicken, ground beef, olive oil, frozen veg.",
   doubleProgression: "Hit the top of the rep range on ALL sets → next session add a 4th set or move to the harder variation.",
   weighIn: [
@@ -444,49 +506,84 @@ const NUTRITION = {
   ]
 };
 
-// A small rotating set of coach lines per phase. One shows after banking.
-// Tone: witness, not judge — earned, never scolding, never a count-down.
-const COACH_NOTES = {
+// The mission, in plain numbers (Locker Room "Mission" section).
+const MISSION = {
+  start: "165 lbs @ 6'0\"",
+  blockTarget: "169–170 lbs by the end of this 12-week block",
+  endGoal: "175 lbs by ~January 2027",
+  pace: "~0.4 lb/week — faster than ~0.5 lb/week at this starting point mostly adds fat. Slow is correct.",
+  headline: "This plan succeeds or fails in the kitchen. The lifting tells the body where to put the weight; the food IS the weight."
+};
+
+/* ---- Coach EVENT lines (fired at bank time — moments, not renders).
+   These may use Math.random on purpose: they are one-shot rewards, not
+   deterministic day content, so they live OUTSIDE the pure-logic block.
+   Voice: salty at the damn/hell/ass tier; punches at effort and excuses,
+   never at James's body or the goal. ---- */
+
+const CELEBRATION = {
   Groove: [
-    "Banked. Grooving the pattern is the whole job right now — clean reps beat heavy reps.",
-    "That's one in the bank. Stay two shy of failure and let the movement get familiar.",
-    "Logged. Early weeks are about showing up and moving well. You did both."
+    "Banked. Clean reps beat heavy reps right now — you did the boring, correct thing. Good.",
+    "That's one. Grooving the pattern is the whole damn job this phase. Keep it tidy.",
+    "Logged. Two shy of failure, moving well. Nobody's impressed yet — that's fine, neither am I. Yet.",
+    "Down. Early weeks are showing up and moving right. You did both. Now eat."
   ],
   Volume: [
-    "Banked. Now it's volume — slow the lowering to three seconds and let the reps stack up.",
-    "One more down. Chase the top of every rep range; that's what triggers the fourth set.",
-    "Logged. Tempo is the weight you don't have to buy. Nice work."
+    "Banked. Now slow the lowering to three seconds and let the reps stack. Tempo's the weight you didn't buy.",
+    "That counts. Chase the top of every rep range — that's what earns the fourth set. Go get it.",
+    "Logged. Volume phase: the reps do the talking and yours just said plenty. Feed it.",
+    "Down. This is where the shape starts arguing back. Keep stacking."
   ],
   "Hard variations": [
-    "Banked. This is the hard-variation block — one-arm work and bag-on-back push-ups earn their keep.",
-    "That counts. The harder variations are where the shape actually changes. Keep going.",
-    "Logged. Rests can stretch toward a minute now; the intensity is doing the talking."
+    "Banked. One-arm work, bag-on-back push-ups — the hard stuff earns its keep. You earned yours.",
+    "That's the hard block and you didn't flinch. Rests can stretch to a minute; the intensity's doing the yelling.",
+    "Logged. This is where the mirror changes its mind about you. Again tomorrow's food, hero.",
+    "Down. Harder variations, same stubborn ass showing up. Respect."
   ],
   "Test + measure": [
-    "Banked. Test week — this is the measure-what-you-built stretch. Finish strong.",
-    "One more. You're at the top of the block; log the numbers when you test.",
-    "Logged. Almost through the block. Bank it, then let's plan phase two."
+    "Banked. Test week — measure what you built. Finish it like you mean it.",
+    "That's one at the top of the block. Log the numbers when you test; the trend line's the trophy.",
+    "Logged. Almost through. Bank it, then we plan phase two. Don't coast now.",
+    "Down. Twelve weeks of stubborn, right here. Close it out."
   ]
 };
+
+const MILESTONE = [
+  "BANKED — and that one lit a badge. Go look at the wall in the Locker Room, then get back to the food.",
+  "That rep just earned you something shiny. Locker Room's got a new light on. Don't let it go to your head.",
+  "New badge, hot off the bags. This is what showing up buys you. Keep buying."
+];
+
+const COMEBACK = [
+  "Look who remembered where the bags live. Flame's relit. Don't make me wait that long again.",
+  "There he is. The iron didn't move itself while you were gone — but you moved it now. Relit.",
+  "Well, damn. Back in the locker room and back on the board. That's all I ever ask. Again soon.",
+  "The flame was cold. It isn't now. That's the whole trick — you just did it. Keep it warm."
+];
+
+const SINCERE = [
+  "I see every one of these, you know. Proud doesn't cover it. Now get out of my locker room and go eat.",
+  "Off the record: the discipline you're building here outlasts the biceps. I mean that. Door's that way, champ.",
+  "Just this once, no trash talk. You keep showing up when it'd be easier not to. That's the whole game. Well done."
+];
+
+const SINCERE_DAY45 = "Forty-five days done, forty-five to go. The kid who started this couldn't do what you did today. I noticed. Keep going.";
+
 
 // ============================================================
 // === PURE LOGIC START ===
 // Pure DATA and pure FUNCTIONS only: no DOM, no localStorage, no
-// window/location. The plan constants these functions depend on live inside
-// these markers too, so the extracted block is self-contained on its own.
-// Every function is a pure function of its arguments. A node test
-// harness extracts this exact block (everything between the START and
-// END markers) and calls these functions by name, so the block must be
-// valid standalone JavaScript — both markers are plain line comments.
+// window/location. Every function is a pure function of its arguments.
+// A node test harness extracts EVERYTHING between the START and END
+// markers and calls these functions by name, so this block must be valid
+// standalone JavaScript — both markers are plain line comments.
 //
-// Date convention: functions take a JS Date built for the LOCAL day.
-// We read it with getFullYear/getMonth/getDate (local getters) so the
-// result depends on the device's local calendar day, never on UTC.
+// Date convention: functions take a JS Date built for the LOCAL day and
+// read it with local getters, so results depend on the device's local
+// calendar day, never on UTC.
 // ============================================================
 
 // The program starts Monday 2026-07-06 and runs 12 weeks (last day 2026-10-03).
-// Stored as parts, not a Date string, so we can build a LOCAL date with no
-// timezone surprises (see makeLocalDate below).
 const PROGRAM_START = { year: 2026, month: 7, day: 6 }; // month is 1-based here
 const PROGRAM_WEEKS = 12;
 const SESSIONS_TO_COMPLETE = 36;      // 3 lifts/week * 12 weeks
@@ -500,17 +597,116 @@ const PHASES = [
   { weeks: [12, 12], name: "Test + measure",  focus: "Max push-up test, weigh-in, photos, plan the next block." }
 ];
 
-// Build a Date at LOCAL midnight from year/month(1-based)/day parts.
-// We pass day-of-month args to the Date constructor (not a "YYYY-MM-DD"
-// string) because the string form parses as UTC midnight, which can shift
-// the day backward in western timezones. This form is always local.
+// The flame / momentum levels, index 0..4.
+const HEAT_LEVELS = [
+  { name: "Cold Iron", glyph: "🪵" },
+  { name: "Flicker",   glyph: "🔥" },
+  { name: "Burning",   glyph: "🔥" },
+  { name: "Blazing",   glyph: "🔥" },
+  { name: "Inferno",   glyph: "🔥" }
+];
+
+// XP ("Mass") awards and level thresholds. Perfect 12-week block = 36 lifts
+// (900) + up to 12 Saturdays (180) = 1,080, so Mass Monster (1000) needs the
+// lifts plus most Saturdays.
+const XP_PER_LIFT = 25;
+const XP_PER_MOBILITY = 15;
+const LEVELS = [
+  { xp: 0,    name: "Twig" },
+  { xp: 100,  name: "Stringbean" },
+  { xp: 250,  name: "Solid" },
+  { xp: 450,  name: "Dense" },
+  { xp: 700,  name: "Heavy" },
+  { xp: 1000, name: "Mass Monster" }
+];
+
+// Badge catalog, in display order. Trigger logic lives in badgesFor.
+const BADGES = [
+  { id: "first-blood",   name: "First Blood",     icon: "🩸", hint: "Bank your first lift." },
+  { id: "first-six",     name: "The First Six",   icon: "6️⃣", hint: "Bank 6 lifts." },
+  { id: "dozen",         name: "The Dozen",       icon: "🥚", hint: "Bank 12 lifts." },
+  { id: "halfway-heavy", name: "Halfway Heavy",   icon: "⚖️", hint: "Bank 18 lifts." },
+  { id: "two-dozen",     name: "Two-Dozen Deep",  icon: "💪", hint: "Bank 24 lifts." },
+  { id: "thirty",        name: "Thirty Piece",    icon: "🍗", hint: "Bank 30 lifts." },
+  { id: "full-36",       name: "The Full 36",     icon: "🏆", hint: "Bank all 36 lifts." },
+  { id: "full-rotation", name: "Full Rotation",   icon: "🔁", hint: "An A, a B, and a C inside one week." },
+  { id: "full-furnace",  name: "Full Furnace",    icon: "🌋", hint: "Reach Inferno on the flame." },
+  { id: "overtime",      name: "Overtime",        icon: "📅", hint: "Lift on a non-lift day." },
+  { id: "bendy",         name: "Bendy",           icon: "🧘", hint: "Bank your first mobility day." }
+];
+
+// Deterministic "line of the day" pools. coachLine() hashes (date + context)
+// so a line is stable all day and rotates daily. Each pool has >= 6 lines.
+// Kept INSIDE the pure block so the extracted block is self-contained.
+const COACH_DAY_LINES = {
+  "lift-A": [
+    "Day A. Squat and push. The bag doesn't care how you slept — pick it up.",
+    "Day A on deck. Bearhug that 37.5 like it owes you money.",
+    "Squat + push day. Chest and quads. Let's give the shirt something to complain about.",
+    "Day A. Push-ups honest, squats deep. No half reps in my locker room.",
+    "It's an A day. The floor's right there for the push-ups. So are the excuses. Ignore one of them.",
+    "Day A. Big pushes today. Move well, breathe, and quit stalling."
+  ],
+  "lift-B": [
+    "Day B. The RDLs won't romance themselves. Hinge, don't squat it.",
+    "Day B — hinge and pull. Hips back, back flat, ego lower.",
+    "Pull day. Row that bag to your ribs like you mean it. Half-pulls are for other people.",
+    "Day B. Hamstrings and back. This is the day that fixes your posture and your attitude.",
+    "It's a B day. Clean the bag, own the shoulder, set it down proud.",
+    "Day B. Hinge hard, pull harder. The scale's watching, hero."
+  ],
+  "lift-C": [
+    "Day C. Unilateral and arms. One leg at a time — nowhere to hide, McCormick.",
+    "Day C. Bulgarians. Yeah, they're miserable. That's the point. Down you go.",
+    "Arms day dressed up as leg day. Split squats first, curls last. Earn the curls.",
+    "Day C. Single-leg work exposes everything. Good. Expose it and fix it.",
+    "It's a C day. Step-ups, split squats, then the fun stuff. No skipping to the fun stuff.",
+    "Day C. One side at a time. Balance is a skill and you're buying it in reps."
+  ],
+  "rest-nag": [
+    "Rest day, not a fast, McCormick. 2,900. The scale doesn't negotiate.",
+    "No lifting today. That does NOT mean no eating. Hit the breakfast, hit the shake.",
+    "Rest day. Recovery is where the muscle actually shows up — so feed it. 150–160 g protein.",
+    "Off day. The only rep today is fork-to-mouth, and you'd better hit all your sets.",
+    "Resting? Fine. Skipping the shake? Not on my watch. Blend it.",
+    "Rest day. Growth happens now, not at the bags. Sleep 7.5+ and eat like you mean it."
+  ],
+  "mobility-greeting": [
+    "Saturday. Mobility. Yeah it's not glamorous — it's the work that lets you keep working.",
+    "Mobility day. Move slow, breathe, and don't turn a stretch into a workout. Easy on purpose.",
+    "It's a Saturday flow. Loosen the hips, open the chest, keep the surplus. Don't go run a marathon.",
+    "Mobility + easy conditioning. Conversational pace. If you can't talk, you're doing cardio wrong today.",
+    "Saturday. Six movements, easy walk. This is the day your knees write you a thank-you note.",
+    "Mobility day. Keep it gentle. Hard cardio burns the food you fought to eat all week."
+  ],
+  "friday-weighin": [
+    "Friday. Weigh in first — after the bathroom, before food — then log it in the vault. The trend is the boss.",
+    "It's weigh-in Friday. Step on, write it down, don't argue with the number. Then go lift.",
+    "Friday morning: scale, then breakfast. Numbers over feelings, always.",
+    "Weigh-in day. One data point isn't a verdict — the two-week trend is. Log it.",
+    "Friday. Get the weight, feed the trend line, then earn Day C. In that order.",
+    "Scale day. Honest number, logged in the vault. That's how we know the food's working."
+  ]
+};
+
+// One deterministic line per level for the Locker Room level card.
+const LEVEL_LINES = {
+  "Twig": "Twig. Everybody starts here. The only twigs that stay twigs are the ones that quit. Don't.",
+  "Stringbean": "Stringbean. There's a shape forming under there. Keep feeding it.",
+  "Solid": "Solid. Now we're talking. The bag's noticing. So am I, a little.",
+  "Dense": "Dense. You've put in real work and it shows. Don't get comfortable — Heavy's right there.",
+  "Heavy": "Heavy. That's a lot of banked, honest work. The kid who started this would not recognize you.",
+  "Mass Monster": "Mass Monster. You maxed the board. I don't hand these out. Go plan the next mountain."
+};
+
+// Build a Date at LOCAL midnight from year/month(1-based)/day parts. We pass
+// day-of-month args (not a "YYYY-MM-DD" string) because the string form parses
+// as UTC midnight, which can shift the day backward in western timezones.
 function makeLocalDate(year, month1Based, day) {
   return new Date(year, month1Based - 1, day);
 }
 
 // Whole days from date A to date B, ignoring the time-of-day component.
-// We normalize both to local midnight first so a 9am "today" and an 11pm
-// "start" still differ by an exact number of days.
 function daysBetween(fromDate, toDate) {
   const a = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
   const b = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate());
@@ -518,28 +714,37 @@ function daysBetween(fromDate, toDate) {
   return Math.round((b - a) / MS_PER_DAY);
 }
 
+// Parse a stored "YYYY-MM-DD" string to a LOCAL Date, or null if malformed.
+function parseSessionDate(dateStr) {
+  if (typeof dateStr !== "string") return null;
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return null;
+  const y = parseInt(parts[0], 10), m = parseInt(parts[1], 10), d = parseInt(parts[2], 10);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
+  return makeLocalDate(y, m, d);
+}
+
 // weekNumber(date) -> 1..12. Days before the start clamp to 1; the overrun
-// tail (days 85–90, i.e. 2026-09-28 → 10-03) computes as 13 and clamps to 12.
+// tail (days 85–90) computes as 13 and clamps to 12.
 function weekNumber(date) {
   const start = makeLocalDate(PROGRAM_START.year, PROGRAM_START.month, PROGRAM_START.day);
-  const dayIndex = daysBetween(start, date);       // 0 on the start day
-  const rawWeek = Math.floor(dayIndex / 7) + 1;     // 1-based week number
+  const dayIndex = daysBetween(start, date);
+  const rawWeek = Math.floor(dayIndex / 7) + 1;
   if (rawWeek < 1) return 1;
   if (rawWeek > PROGRAM_WEEKS) return PROGRAM_WEEKS;
   return rawWeek;
 }
 
-// dayType(date) -> which kind of day this is, by LOCAL weekday.
-// Mon/Wed/Fri = lift, Sat = mobility, Tue/Thu/Sun = rest.
+// dayType(date) -> "lift" | "mobility" | "rest" by LOCAL weekday.
 function dayType(date) {
   const weekday = date.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
   if (weekday === 1 || weekday === 3 || weekday === 5) return "lift";
   if (weekday === 6) return "mobility";
-  return "rest"; // Sun (0), Tue (2), Thu (4)
+  return "rest";
 }
 
-// Count how many of the completed sessions were lifts (A/B/C).
-// Mobility sessions do NOT count toward the lift rotation or the 36-dot grid.
+// Count how many completed sessions were lifts (A/B/C). Mobility does NOT
+// count toward the lift rotation or the 36-dot grid.
 function liftCount(sessions) {
   if (!Array.isArray(sessions)) return 0;
   let count = 0;
@@ -549,9 +754,8 @@ function liftCount(sessions) {
   return count;
 }
 
-// nextLiftType(sessions) -> "A" | "B" | "C".
-// The rotation is strictly A→B→C by POSITION, not by calendar. Position is the
-// number of lifts already banked, mod 3 — so a missed day never advances it.
+// nextLiftType(sessions) -> "A" | "B" | "C". Rotation is strictly A→B→C by
+// POSITION (lifts banked mod 3), so a skipped day never advances it.
 function nextLiftType(sessions) {
   const position = liftCount(sessions) % 3;
   return ["A", "B", "C"][position];
@@ -564,19 +768,163 @@ function phaseFor(week) {
       return { name: phase.name, focus: phase.focus };
     }
   }
-  // Fallback (weeks are always 1..12, so this is belt-and-suspenders).
   const last = PHASES[PHASES.length - 1];
   return { name: last.name, focus: last.focus };
 }
 
-// isBlockComplete(date, bankedCount) -> true when the block is finished.
-// Two triggers, whichever comes first: 36 banked lift sessions, OR the local
-// date has reached the block-complete date (2026-10-04). bankedCount is the
-// A/B/C count only (mobility excluded).
+// isBlockComplete(date, bankedCount) -> true when finished. Two triggers,
+// whichever comes first: 36 banked lifts, OR the local date reached 2026-10-04.
 function isBlockComplete(date, bankedCount) {
   if (bankedCount >= SESSIONS_TO_COMPLETE) return true;
   const cutoff = makeLocalDate(BLOCK_COMPLETE_DATE.year, BLOCK_COMPLETE_DATE.month, BLOCK_COMPLETE_DATE.day);
-  return daysBetween(cutoff, date) >= 0; // date is on/after the cutoff
+  return daysBetween(cutoff, date) >= 0;
+}
+
+// heatLevel(sessions, today) -> 0..4 = count of sessions (lift AND mobility)
+// dated in the inclusive window [today-7, today] in local time, capped at 4.
+// Boundary is exact: a session dated today-7 COUNTS; today-8 does NOT.
+function heatLevel(sessions, today) {
+  if (!Array.isArray(sessions)) return 0;
+  let count = 0;
+  for (const s of sessions) {
+    if (!s) continue;
+    const d = parseSessionDate(s.date);
+    if (!d) continue;
+    const diff = daysBetween(d, today); // today - sessionDate, in days
+    if (diff >= 0 && diff <= 7) count++;
+  }
+  return count > 4 ? 4 : count;
+}
+
+// xpFor(sessions) -> total "Mass": +25 per lift, +15 per mobility.
+function xpFor(sessions) {
+  if (!Array.isArray(sessions)) return 0;
+  let xp = 0;
+  for (const s of sessions) {
+    if (!s) continue;
+    if (s.type === "A" || s.type === "B" || s.type === "C") xp += XP_PER_LIFT;
+    else if (s.type === "mobility") xp += XP_PER_MOBILITY;
+  }
+  return xp;
+}
+
+// levelFor(xp) -> the current level plus what the level card needs to draw a
+// progress bar to the next level. At max level, next* is null and isMax true.
+function levelFor(xp) {
+  let idx = 0;
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (xp >= LEVELS[i].xp) idx = i;
+  }
+  const cur = LEVELS[idx];
+  const next = LEVELS[idx + 1] || null;
+  return {
+    name: cur.name,
+    xp: xp,
+    currentThreshold: cur.xp,
+    nextName: next ? next.name : null,
+    nextThreshold: next ? next.xp : null,
+    isMax: !next
+  };
+}
+
+// Does the session set contain an A, a B, AND a C all inside one 7-day window?
+// A 7-day window spans dates gap 0..6 apart. Dates are sorted so we can stop
+// scanning once a partner is more than 6 days out.
+function hasFullRotation(sessions) {
+  if (!Array.isArray(sessions)) return false;
+  const lifts = [];
+  for (const s of sessions) {
+    if (s && (s.type === "A" || s.type === "B" || s.type === "C")) {
+      const d = parseSessionDate(s.date);
+      if (d) lifts.push({ type: s.type, d: d });
+    }
+  }
+  lifts.sort(function (a, b) { return a.d - b.d; });
+  for (let i = 0; i < lifts.length; i++) {
+    const types = {};
+    for (let j = i; j < lifts.length; j++) {
+      if (daysBetween(lifts[i].d, lifts[j].d) <= 6) types[lifts[j].type] = true;
+      else break; // sorted ascending: everything past here is further out
+    }
+    if (types.A && types.B && types.C) return true;
+  }
+  return false;
+}
+
+// Did heat ever reach Inferno (4)? Check the trailing-8-day count as of each
+// banked session's own date — that's when a 4 would first have appeared.
+function everReachedInferno(sessions) {
+  if (!Array.isArray(sessions)) return false;
+  for (const s of sessions) {
+    if (!s) continue;
+    const d = parseSessionDate(s.date);
+    if (!d) continue;
+    if (heatLevel(sessions, d) >= 4) return true;
+  }
+  return false;
+}
+
+// badgesFor(sessions, today) -> array of earned badge ids. All derivable from
+// the sessions array + dates.
+function badgesFor(sessions, today) {
+  const earned = [];
+  if (!Array.isArray(sessions)) return earned;
+  const lifts = liftCount(sessions);
+  if (lifts >= 1)  earned.push("first-blood");
+  if (lifts >= 6)  earned.push("first-six");
+  if (lifts >= 12) earned.push("dozen");
+  if (lifts >= 18) earned.push("halfway-heavy");
+  if (lifts >= 24) earned.push("two-dozen");
+  if (lifts >= 30) earned.push("thirty");
+  if (lifts >= 36) earned.push("full-36");
+
+  if (hasFullRotation(sessions)) earned.push("full-rotation");
+  if (everReachedInferno(sessions)) earned.push("full-furnace");
+
+  // overtime: any lift banked on a LOCAL weekday that isn't Mon/Wed/Fri.
+  let overtime = false, bendy = false;
+  for (const s of sessions) {
+    if (!s) continue;
+    if (s.type === "mobility") bendy = true;
+    if (s.type === "A" || s.type === "B" || s.type === "C") {
+      const d = parseSessionDate(s.date);
+      if (d) {
+        const wd = d.getDay();
+        if (!(wd === 1 || wd === 3 || wd === 5)) overtime = true;
+      }
+    }
+  }
+  if (overtime) earned.push("overtime");
+  if (bendy) earned.push("bendy");
+  return earned;
+}
+
+// The coach signs "Coach Burlap" once the Dozen badge (12 lifts) is earned.
+function coachName(sessions, today) {
+  return badgesFor(sessions, today).indexOf("dozen") !== -1 ? "Coach Burlap" : "Coach";
+}
+
+// coachLine(contextKey, dateString) -> a deterministic line from the context's
+// pool. A small stable string hash of (dateString + contextKey) picks the
+// index, so the line is fixed all day and rotates across days.
+function coachLine(contextKey, dateString) {
+  const pool = COACH_DAY_LINES[contextKey];
+  if (!pool || pool.length === 0) return "";
+  const s = String(dateString) + "|" + String(contextKey);
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) | 0;
+  }
+  return pool[Math.abs(hash) % pool.length];
+}
+
+// The halfway mark: day 45 of 90, derived as start + 44 days (= 2026-08-19).
+function halfwayDate() {
+  const start = makeLocalDate(PROGRAM_START.year, PROGRAM_START.month, PROGRAM_START.day);
+  return new Date(start.getFullYear(), start.getMonth(), start.getDate() + 44);
+}
+function isHalfwayDay(date) {
+  return daysBetween(halfwayDate(), date) === 0;
 }
 
 // === PURE LOGIC END ===
@@ -589,25 +937,20 @@ function isBlockComplete(date, bankedCount) {
 
 // --- localStorage keys ---
 const KEY_SESSIONS = "bulkday.sessions"; // array of {date, type} in completion order
-const KEY_ACTIVE = "bulkday.active";     // {type, date, checked:[indices]} for the in-progress session
+const KEY_ACTIVE = "bulkday.active";     // {type, date, checked:[indices]} in-progress session
+const KEY_META = "bulkday.meta";         // { seenBadges: [...] } — the only non-derivable state
 
-// Read + parse a localStorage value, returning a fallback on ANY problem
-// (missing key, corrupt JSON, wrong shape). The app must never crash on
-// storage; a bad value is treated as "nothing saved yet".
 function loadSessions() {
   try {
     const raw = localStorage.getItem(KEY_SESSIONS);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    // Keep only well-formed entries; ignore anything malformed.
     return parsed.filter(function (s) {
       return s && typeof s.date === "string" &&
              (s.type === "A" || s.type === "B" || s.type === "C" || s.type === "mobility");
     });
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 }
 
 function loadActive() {
@@ -618,24 +961,36 @@ function loadActive() {
     if (!parsed || typeof parsed.type !== "string" ||
         typeof parsed.date !== "string" || !Array.isArray(parsed.checked)) return null;
     return parsed;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
+}
+
+// Meta holds ONLY the set of badge ids whose "earned" toast has already shown.
+// Corrupt/absent meta -> treat as empty (we re-toast at worst; never crash).
+function loadMeta() {
+  try {
+    const raw = localStorage.getItem(KEY_META);
+    if (!raw) return { seenBadges: [] };
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.seenBadges)) return { seenBadges: [] };
+    return { seenBadges: parsed.seenBadges.filter(function (b) { return typeof b === "string"; }) };
+  } catch (e) { return { seenBadges: [] }; }
 }
 
 function saveSessions(sessions) {
   try { localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions)); } catch (e) {}
 }
-
 function saveActive(active) {
   try {
     if (active) localStorage.setItem(KEY_ACTIVE, JSON.stringify(active));
     else localStorage.removeItem(KEY_ACTIVE);
   } catch (e) {}
 }
+function saveMeta(meta) {
+  try { localStorage.setItem(KEY_META, JSON.stringify(meta)); } catch (e) {}
+}
 
-// Format a Date as "YYYY-MM-DD" using LOCAL getters. We deliberately do NOT
-// use toISOString(), which converts to UTC and can print yesterday's date.
+// Format a Date as "YYYY-MM-DD" using LOCAL getters (never toISOString, which
+// converts to UTC and can print yesterday's date).
 function localDateString(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -643,17 +998,15 @@ function localDateString(date) {
   return y + "-" + m + "-" + d;
 }
 
-// --- URL query overrides (for previewing any state; never persisted) ---
-// ?day=tue  -> force the day type    (mon/tue/.../sun, or lift/mobility/rest)
-// ?week=9   -> force the week number (1..12)
-// ?banked=14-> force the banked count shown in the grid + block-complete check
+// --- URL query overrides (preview any state; NEVER persisted) ---
+// ?day=tue  force day type      ?week=9   force week
+// ?banked=14 force banked count  ?heat=3   force flame DISPLAY   ?xp=580 force level DISPLAY
+// heat/xp overrides touch the flame + level card display ONLY. Real heat/xp/
+// badges always derive from real sessions; overrides never affect banking.
 function readOverrides() {
   const params = new URLSearchParams(window.location.search);
   const overrides = {};
-
-  if (params.has("day")) {
-    overrides.day = normalizeDayParam(params.get("day"));
-  }
+  if (params.has("day")) overrides.day = normalizeDayParam(params.get("day"));
   if (params.has("week")) {
     const w = parseInt(params.get("week"), 10);
     if (!isNaN(w)) overrides.week = Math.max(1, Math.min(PROGRAM_WEEKS, w));
@@ -662,28 +1015,65 @@ function readOverrides() {
     const b = parseInt(params.get("banked"), 10);
     if (!isNaN(b)) overrides.banked = Math.max(0, b);
   }
+  if (params.has("heat")) {
+    const h = parseInt(params.get("heat"), 10);
+    if (!isNaN(h)) overrides.heat = Math.max(0, Math.min(4, h));
+  }
+  if (params.has("xp")) {
+    const x = parseInt(params.get("xp"), 10);
+    if (!isNaN(x)) overrides.xp = Math.max(0, x);
+  }
   return overrides;
 }
 
-// Turn a ?day= value into a "lift" | "mobility" | "rest" day type.
-// Accepts weekday names (mon, tue, ...) or the type names directly.
 function normalizeDayParam(value) {
   const v = String(value).toLowerCase().slice(0, 3);
-  const liftDays = ["mon", "wed", "fri"];
-  if (liftDays.indexOf(v) !== -1) return "lift";
+  if (["mon", "wed", "fri"].indexOf(v) !== -1) return "lift";
   if (v === "sat") return "mobility";
   if (["sun", "tue", "thu"].indexOf(v) !== -1) return "rest";
-  // Allow passing the type name straight through.
   if (v === "lif") return "lift";
   if (v === "mob") return "mobility";
   if (v === "res") return "rest";
   return null;
 }
 
-// A short label for the NEXT session (used in rest-day previews).
 function sessionTitle(type) {
   if (type === "mobility") return MOBILITY.title;
   return WORKOUTS[type].title;
+}
+
+// The real device-local date, wrapped so visibilitychange re-reads it.
+function getEffectiveDate() { return new Date(); }
+
+// Which tab is active, from the URL hash (no network, no SW involvement).
+function activeTab() {
+  return window.location.hash === "#locker" ? "locker" : "today";
+}
+
+
+/* ============================================================
+   WEB AUDIO CLANK
+   A short synthesized "clank" on bank — no audio files. Created/resumed
+   inside the bank click (iOS requires an AudioContext resume on a gesture).
+   ============================================================ */
+let audioCtx = null;
+function playClank() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(190, now);
+    osc.frequency.exponentialRampToValueAtTime(90, now + 0.14);
+    gain.gain.setValueAtTime(0.09, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.16);
+  } catch (e) {}
 }
 
 
@@ -691,66 +1081,67 @@ function sessionTitle(type) {
    BANKING
    ============================================================ */
 
-// After banking, the very next render shows that session's coach note once,
-// then forgets it. We stash the just-banked type here (module-level) instead of
-// re-deriving it from the rotation — the rotation has ALREADY advanced by then,
-// so it no longer points at the workout that was actually completed.
-let justBankedType = null;
+// After banking, the very next render animates + shows that session's coach
+// event line. We stash the full "what just happened" so the render can draw
+// the XP tick, flame-rise, badge toast, and the right event line.
+let justBanked = null; // { type, xpGain, heatBefore, heatAfter, newBadges, sincereDay45 }
 
-// Bank one session: append {date, type} to the sessions list, clear the
-// in-progress checkbox state, and re-render. Idempotent per day+type: if a
-// session of this type was already banked today, a second tap does nothing
-// (guards against a double-tap banking twice).
 function bankSession(type) {
-  const today = localDateString(getEffectiveDate());
+  const now = getEffectiveDate();
+  const today = localDateString(now);
   const sessions = loadSessions();
 
-  const alreadyBankedToday = sessions.some(function (s) {
-    return s.date === today && s.type === type;
-  });
-  if (alreadyBankedToday) return;
+  // Idempotent per day+type: a double-tap can't bank twice.
+  if (sessions.some(function (s) { return s.date === today && s.type === type; })) return;
+
+  // Prior history distinguishes a genuine return (cold flame + past sessions)
+  // from a brand-new first bank — only the former earns a "comeback" tease.
+  const hadHistory = sessions.length > 0;
+  const heatBefore = heatLevel(sessions, now);
+  const badgesBefore = badgesFor(sessions, now);
 
   sessions.push({ date: today, type: type });
   saveSessions(sessions);
-  saveActive(null);       // the session is done; drop its checkbox state
-  justBankedType = type;  // the next render shows this session's coach note
+  saveActive(null); // the session is done; drop its checkbox state
+
+  const heatAfter = heatLevel(sessions, now);
+  const badgesAfter = badgesFor(sessions, now);
+  const newBadges = badgesAfter.filter(function (b) { return badgesBefore.indexOf(b) === -1; });
+
+  justBanked = {
+    type: type,
+    xpGain: (type === "mobility" ? XP_PER_MOBILITY : XP_PER_LIFT),
+    heatBefore: heatBefore,
+    heatAfter: heatAfter,
+    newBadges: newBadges,
+    hadHistory: hadHistory,
+    sincereDay45: isHalfwayDay(now)
+  };
+
+  playClank();
   render();
 }
 
-// Toggle one exercise's checkbox in the in-progress session and persist it,
-// so a mid-workout app switch (to a timer, say) doesn't lose progress.
-// If the active record is for a different session type than the one on screen,
-// we start fresh — you can't carry checks from A into B. Every save re-stamps
-// today's date, so a workout that straddles midnight keeps its checks.
+// Toggle one exercise's checkbox and persist it, so a mid-workout app switch
+// doesn't lose progress. Every save re-stamps today's date.
 function toggleCheck(sessionType, index, isChecked) {
   let active = loadActive();
-  if (!active || active.type !== sessionType) {
-    active = { type: sessionType, checked: [] };
-  }
+  if (!active || active.type !== sessionType) active = { type: sessionType, checked: [] };
   const set = new Set(active.checked);
-  if (isChecked) set.add(index);
-  else set.delete(index);
+  if (isChecked) set.add(index); else set.delete(index);
   active.checked = Array.from(set).sort(function (a, b) { return a - b; });
   active.date = localDateString(getEffectiveDate());
   saveActive(active);
 }
 
-// Which checkbox indices are currently ticked for this session type?
-// A record counts only if it matches the type on screen AND was saved TODAY.
-// Staleness is judged by date, not type: half-checked boxes from Monday's
-// unfinished Day A must not reappear on Wednesday even though the rotation
-// still says "A" — you didn't do those reps today. Old-dated records are
-// deleted here; a same-day record of a DIFFERENT type is left alone, so
-// peeking at the lift card via "Train anyway" can't wipe an in-progress
-// session. (Spec: active is cleared on bank or when it goes stale.)
+// Which checkbox indices are ticked for this session type? Counts only if it
+// matches the type on screen AND was saved TODAY; stale (old-dated) records are
+// cleared so yesterday's half-checked boxes never reappear.
 function checkedIndicesFor(sessionType) {
   const today = localDateString(getEffectiveDate());
   const active = loadActive();
   if (!active) return new Set();
-  if (active.date !== today) {
-    saveActive(null);
-    return new Set();
-  }
+  if (active.date !== today) { saveActive(null); return new Set(); }
   if (active.type === sessionType) return new Set(active.checked);
   return new Set();
 }
@@ -758,43 +1149,49 @@ function checkedIndicesFor(sessionType) {
 
 /* ============================================================
    STATE ASSEMBLY
-   Combine the real local date with any query overrides into the
-   single "state" object every render function reads from.
+   Combine the real local date with any query overrides into the single
+   "state" object every render function reads from. Real (unoverridden)
+   heat/xp are kept separately because banking logic must never trust a
+   preview override.
    ============================================================ */
-
-// The real device-local date. Wrapped in a function so visibilitychange
-// re-reads it (an app left open overnight sees the new day).
-function getEffectiveDate() {
-  return new Date();
-}
 
 function computeState() {
   const overrides = readOverrides();
   const now = getEffectiveDate();
-
-  // Sessions from storage give us the real banked count and next lift.
   const sessions = loadSessions();
   const realBanked = liftCount(sessions);
 
-  // Day type, week, and banked count each fall back to the real computed
-  // value unless an override is present. Overrides are view-only.
   const day = overrides.day || dayType(now);
   const week = overrides.week || weekNumber(now);
   const banked = (overrides.banked !== undefined) ? overrides.banked : realBanked;
-
-  // Mobility dot count (its own row) — never overridden, purely from storage.
   const mobilityBanked = sessions.filter(function (s) { return s.type === "mobility"; }).length;
+
+  // Real derived values (always from real sessions).
+  const realHeat = heatLevel(sessions, now);
+  const realXp = xpFor(sessions);
+
+  // Display values honor ?heat= / ?xp= overrides; real values do not.
+  const heat = (overrides.heat !== undefined) ? overrides.heat : realHeat;
+  const xp = (overrides.xp !== undefined) ? overrides.xp : realXp;
 
   return {
     now: now,
+    today: localDateString(now),
     sessions: sessions,
-    day: day,               // "lift" | "mobility" | "rest"
-    week: week,             // 1..12
-    banked: banked,         // A/B/C count shown in the grid
+    day: day,
+    week: week,
+    banked: banked,
     mobilityBanked: mobilityBanked,
     nextLift: nextLiftType(sessions),
     phase: phaseFor(week),
     blockComplete: isBlockComplete(now, banked),
+    heat: heat,                 // for display (flame)
+    xp: xp,                     // for display (level card)
+    level: levelFor(xp),
+    badges: badgesFor(sessions, now),
+    coachName: coachName(sessions, now),
+    isHalfway: isHalfwayDay(now),
+    activeTab: activeTab(),
     isOverridden: Object.keys(overrides).length > 0
   };
 }
@@ -802,9 +1199,8 @@ function computeState() {
 
 /* ============================================================
    RENDERING
-   Small builder helpers keep the markup readable and safe: we set
-   textContent (never innerHTML) for any dynamic string, so plan text
-   can't accidentally be interpreted as HTML.
+   Builder helpers keep markup readable and safe: dynamic strings use
+   textContent (never innerHTML), so plan text can't be read as HTML.
    ============================================================ */
 
 function el(tag, className, text) {
@@ -814,27 +1210,119 @@ function el(tag, className, text) {
   return node;
 }
 
-// ---- Phase banner (always visible) ----
+// ---- Tab bar ----
+function renderTabs(state) {
+  const mount = document.getElementById("tabs");
+  mount.innerHTML = "";
+  const bar = el("div", "tabs");
+
+  // Anchors that only change the hash — no navigation, no network, no SW hit.
+  const today = el("a", "tab" + (state.activeTab === "today" ? " active" : ""), "Today");
+  today.href = "#today";
+  const locker = el("a", "tab" + (state.activeTab === "locker" ? " active" : ""), "Locker Room");
+  locker.href = "#locker";
+
+  bar.appendChild(today);
+  bar.appendChild(locker);
+  mount.appendChild(bar);
+}
+
+// ---- Phase banner + flame + coach line of the day (both tabs) ----
+// The flame supports a 5-tap easter egg; a single tap opens the heat overlay.
+let flameTaps = [];
+let halfwayGlowShown = false;
+let blockConfettiShown = false;
+
 function renderPhaseBanner(state) {
   const mount = document.getElementById("phase-banner");
   mount.innerHTML = "";
 
   const banner = el("div", "phase-banner");
-  banner.appendChild(el("div", "week", "Week " + state.week + " of " + PROGRAM_WEEKS));
 
+  const top = el("div", "banner-top");
+  const left = el("div", "left tappable");
+  left.appendChild(el("div", "week", "Week " + state.week + " of " + PROGRAM_WEEKS));
   const focus = el("div", "focus");
   focus.appendChild(el("span", "phase-name", state.phase.name + ": "));
   focus.appendChild(document.createTextNode(state.phase.focus));
-  banner.appendChild(focus);
+  left.appendChild(focus);
+  // Tapping the phase text jumps to the Locker Room Method (phase guide).
+  left.addEventListener("click", function () {
+    window.location.hash = "#locker";
+    setTimeout(function () {
+      const m = document.getElementById("method-section");
+      if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  });
+  top.appendChild(left);
+
+  // Flame (right-aligned). Glyph + name; size scales with heat via CSS class.
+  const flame = el("div", "flame heat-" + state.heat);
+  if (justBanked && justBanked.heatAfter > justBanked.heatBefore) flame.classList.add("rose");
+  flame.appendChild(el("span", "glyph", HEAT_LEVELS[state.heat].glyph));
+  flame.appendChild(el("span", "flame-name", HEAT_LEVELS[state.heat].name));
+  flame.addEventListener("click", function () { onFlameTap(state); });
+  top.appendChild(flame);
+
+  banner.appendChild(top);
+
+  // Coach "line of the day". On the halfway day the coach breaks character.
+  const line = el("div", "coach-line");
+  line.appendChild(el("span", "who", state.coachName));
+  let text;
+  if (state.isHalfway) {
+    text = SINCERE_DAY45;
+  } else {
+    text = coachLine(coachContextFor(state), state.today);
+  }
+  line.appendChild(document.createTextNode(text));
+  banner.appendChild(line);
+
+  // Halfway-day glow, once per app session.
+  if (state.isHalfway && !halfwayGlowShown) {
+    halfwayGlowShown = true;
+    banner.classList.add("glow");
+  }
 
   mount.appendChild(banner);
 }
 
-// ---- Dot grid (always visible): 36 lift dots + a mobility row ----
-function renderGrid(state) {
-  const mount = document.getElementById("grid");
-  mount.innerHTML = "";
+// Pick the coach context by day type (used for the deterministic line-of-day).
+function coachContextFor(state) {
+  if (state.now.getDay() === 5) return "friday-weighin"; // real Friday
+  if (state.day === "lift") return "lift-" + state.nextLift;
+  if (state.day === "mobility") return "mobility-greeting";
+  return "rest-nag";
+}
 
+// Flame tap: single tap opens the heat explainer; 5 taps in 3s is an egg.
+function onFlameTap(state) {
+  const t = Date.now();
+  flameTaps.push(t);
+  flameTaps = flameTaps.filter(function (x) { return t - x < 3000; });
+  if (flameTaps.length >= 5) {
+    flameTaps = [];
+    showOverlay("🔥", "Quit poking the flame and go lift something.", null);
+    const flame = document.querySelector(".flame");
+    if (flame) { flame.classList.remove("rose"); void flame.offsetWidth; flame.classList.add("rose"); }
+    return;
+  }
+  // True (uncapped, real) count for the "Right now" line — not the capped/
+  // overridable heat level, so the number is always honest.
+  let realCount = 0;
+  for (const s of state.sessions) {
+    const dd = parseSessionDate(s.date);
+    if (dd) { const diff = daysBetween(dd, state.now); if (diff >= 0 && diff <= 7) realCount++; }
+  }
+  showOverlay(
+    HEAT_LEVELS[state.heat].glyph,
+    "The flame counts every session — lift or mobility — you've banked in the last 8 days, up to four. It grows with work and cools quietly with time; it never scolds you.",
+    realCount
+  );
+}
+
+// ---- Dot grid (Today tab): 36 lift dots + a mobility row ----
+function renderGrid(state, mount) {
   const card = el("div", "grid-card");
 
   const label = el("div", "grid-label");
@@ -842,27 +1330,61 @@ function renderGrid(state) {
   label.appendChild(el("strong", null, state.banked + " of " + SESSIONS_TO_COMPLETE));
   card.appendChild(label);
 
-  // 36 dots; the first `banked` are filled. Empty = "not yet".
+  // 36 dots; the first `banked` are filled. Empty = "not yet". The dot that was
+  // just banked pops in.
+  // Only animate the just-banked dot when the grid reflects real state; a
+  // ?banked= display override would otherwise pop a dot that isn't the one banked.
+  const justLiftBank = justBanked && justBanked.type !== "mobility" && !state.isOverridden;
   const dots = el("div", "dots");
   for (let i = 0; i < SESSIONS_TO_COMPLETE; i++) {
-    dots.appendChild(el("div", i < state.banked ? "dot filled" : "dot"));
+    const d = el("div", i < state.banked ? "dot filled" : "dot");
+    if (justLiftBank && i === state.banked - 1) d.classList.add("pop");
+    dots.appendChild(d);
   }
   card.appendChild(dots);
 
-  // Optional mobility row (12 dots) under the main grid.
   card.appendChild(el("div", "mobility-row-label", "Mobility days"));
+  const justMobBank = justBanked && justBanked.type === "mobility" && !state.isOverridden;
   const mob = el("div", "dots mobility");
   for (let i = 0; i < PROGRAM_WEEKS; i++) {
-    mob.appendChild(el("div", i < state.mobilityBanked ? "dot filled" : "dot"));
+    const d = el("div", i < state.mobilityBanked ? "dot filled" : "dot");
+    if (justMobBank && i === state.mobilityBanked - 1) d.classList.add("pop");
+    mob.appendChild(d);
   }
   card.appendChild(mob);
 
   mount.appendChild(card);
 }
 
-// ---- Build one exercise row (shared by lift + mobility) ----
-function exerciseRow(item, index, sessionType, checkedSet, onToggle) {
-  // Pair styling: 1a/2a get a bottom-flat edge, 1b/2b tuck under them.
+
+/* ============================================================
+   TODAY TAB
+   ============================================================ */
+
+function renderToday(state) {
+  const mount = document.getElementById("today");
+  mount.innerHTML = "";
+
+  renderGrid(state, mount);
+
+  // The main card: block-complete wins; then just-banked; then day type.
+  if (state.blockComplete) {
+    renderBlockComplete(state, mount);
+  } else if (justBanked && justBanked.type === "mobility") {
+    renderMobilityCard(state, mount, true);
+  } else if (justBanked) {
+    renderLiftCard(state, mount, justBanked.type);
+  } else if (state.day === "lift") {
+    renderLiftCard(state, mount, null);
+  } else if (state.day === "mobility") {
+    renderMobilityCard(state, mount, false);
+  } else {
+    renderRestCard(state, mount);
+  }
+}
+
+// One exercise row (shared by lift + mobility).
+function exerciseRow(item, index, checkedSet, onToggle) {
   let cls = "exercise";
   if (item.pair && item.pair.endsWith("a")) cls += " pair-a";
   if (item.pair && item.pair.endsWith("b")) cls += " pair-b";
@@ -875,54 +1397,92 @@ function exerciseRow(item, index, sessionType, checkedSet, onToggle) {
   body.appendChild(el("div", "scheme", item.scheme));
   row.appendChild(body);
 
-  // A large label wraps the checkbox for an easy tap target.
   const labelEl = el("label", "check");
   const box = document.createElement("input");
   box.type = "checkbox";
-  // The label has no visible text, so give VoiceOver the exercise name —
-  // otherwise it announces an anonymous "checkbox, unchecked".
   box.setAttribute("aria-label", item.name + " — mark done");
   box.checked = checkedSet.has(index);
   box.addEventListener("change", function () { onToggle(index, box.checked); });
   labelEl.appendChild(box);
   row.appendChild(labelEl);
-
   return row;
 }
 
-// ---- Lift day (and the "Train anyway" path) ----
-// bankedType is set only on the render right after a lift is banked: we then
-// show THAT workout's card (with its coach note) instead of jumping the
-// rotation forward to the next one.
-function renderLiftCard(state, bankedType) {
-  const mount = document.getElementById("main");
-  mount.innerHTML = "";
+// A tappable workout title with an inline explainer that toggles open.
+function titleWithExplainer(card, titleText, explainerBuilder) {
+  const row = el("div", "title-row tappable");
+  row.appendChild(el("h2", null, titleText));
+  row.appendChild(el("span", "hint", "what's this?"));
+  card.appendChild(row);
 
-  const type = bankedType || state.nextLift; // just-banked workout, else next in rotation
+  const explainer = el("div", "title-explainer");
+  explainer.style.display = "none";
+  explainerBuilder(explainer);
+  card.appendChild(explainer);
+
+  row.addEventListener("click", function () {
+    explainer.style.display = (explainer.style.display === "none") ? "block" : "none";
+  });
+}
+
+// The coach EVENT note shown on the render right after a bank. Precedence:
+// halfway-day sincere > comeback (heat was cold) > milestone (badge earned) >
+// celebration (with a rare 1-in-40 sincere break). Never references absence
+// except the comeback line, which only fires here, at the moment of return.
+function coachEventNode(state) {
+  let text, sincere = false;
+  const jb = justBanked;
+  if (jb && jb.sincereDay45) {
+    text = SINCERE_DAY45; sincere = true;
+  } else if (jb && jb.heatBefore === 0 && jb.hadHistory) {
+    // Comeback only teases a genuine return: cold flame AND prior sessions.
+    // A brand-new first bank falls through to milestone/celebration instead.
+    text = pick(COMEBACK);
+  } else if (jb && jb.newBadges.length > 0) {
+    text = pick(MILESTONE);
+  } else {
+    const pool = CELEBRATION[state.phase.name] || CELEBRATION.Groove;
+    if (Math.floor(Math.random() * 40) === 0) { text = pick(SINCERE); sincere = true; }
+    else text = pick(pool);
+  }
+  const box = el("div", "coach" + (sincere ? " sincere" : ""));
+  box.appendChild(el("span", "who", state.coachName));
+  box.appendChild(document.createTextNode(text));
+  return box;
+}
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ---- Lift card ----
+function renderLiftCard(state, mount, bankedType) {
+  const type = bankedType || state.nextLift;
   const workout = WORKOUTS[type];
   const checkedSet = checkedIndicesFor(type);
 
   const card = el("div", "card");
-  card.appendChild(el("h2", null, workout.title));
+
+  titleWithExplainer(card, workout.title, function (box) {
+    box.appendChild(makeExpl("A, B, and C are three different lift days that rotate in order. ",
+      "Today is " + type + " — " + workout.targets));
+    box.appendChild(makeExpl("Supersets (the 1a/1b pairing): ",
+      "do the 'a' move, rest ~30s, do its 'b' partner, rest ~60s, then repeat. It saves time and keeps the heart rate up."));
+    box.appendChild(makeExpl("Sequence over calendar: ",
+      "the app always shows the next session in the A→B→C order. Move slow if you need to — the rotation simply waits where you left it and never skips ahead."));
+  });
+
   card.appendChild(el("p", "subhead", "Supersets: do the 'a', rest ~30s, do the 'b', rest ~60s, repeat."));
 
-  // Friday is a lift day, so the weigh-in nudge belongs here. Keyed off the
-  // REAL weekday (never an override) so it only fires on an actual Friday.
+  // Friday weigh-in chip (keyed off the REAL weekday, never an override).
   if (state.now.getDay() === 5) {
     card.appendChild(el("div", "chip", "Weigh-in day — log it in the vault note"));
   }
 
-  // Re-render the button state whenever a box is toggled.
-  function onToggle(index, isChecked) {
-    toggleCheck(type, index, isChecked);
-    refreshDoneButton();
-  }
+  function onToggle(index, isChecked) { toggleCheck(type, index, isChecked); refreshDoneButton(); }
 
   workout.exercises.forEach(function (item, index) {
-    card.appendChild(exerciseRow(item, index, type, checkedSet, onToggle));
+    card.appendChild(exerciseRow(item, index, checkedSet, onToggle));
   });
 
-  // The carry finisher is not a checkbox exercise; it's the closer.
   const fin = el("div", "finisher");
   fin.appendChild(el("div", "tag", "Finisher"));
   const finBody = el("div", "body");
@@ -931,47 +1491,21 @@ function renderLiftCard(state, bankedType) {
   fin.appendChild(finBody);
   card.appendChild(fin);
 
-  // "Session done" appears enabled only when every exercise box is checked.
   const doneBtn = el("button", "btn btn-done", "Session done");
-  doneBtn.addEventListener("click", function () {
-    if (allChecked()) bankSession(type);
-  });
+  doneBtn.addEventListener("click", function () { if (allChecked()) bankSession(type); });
   card.appendChild(doneBtn);
 
-  // A place to drop the coach note after banking (filled by bankSession→render;
-  // shown here only on the render immediately after a bank of THIS type today).
-  if (bankedType) {
-    card.appendChild(coachNoteNode(state.phase.name));
-  }
+  if (bankedType) card.appendChild(coachEventNode(state));
 
   mount.appendChild(card);
 
-  // --- little helpers scoped to this card ---
-  function allChecked() {
-    return checkedIndicesFor(type).size === workout.exercises.length;
-  }
-  function refreshDoneButton() {
-    doneBtn.disabled = !allChecked();
-  }
-  function coachNoteNode(phaseName) {
-    const notes = COACH_NOTES[phaseName] || COACH_NOTES.Groove;
-    const line = notes[Math.floor(Math.random() * notes.length)];
-    const box = el("div", "coach");
-    box.appendChild(el("span", "who", "Coach"));
-    box.appendChild(document.createTextNode(line));
-    return box;
-  }
-
-  refreshDoneButton(); // set initial enabled/disabled state
+  function allChecked() { return checkedIndicesFor(type).size === workout.exercises.length; }
+  function refreshDoneButton() { doneBtn.disabled = !allChecked(); }
+  refreshDoneButton();
 }
 
-// ---- Mobility day ----
-// bankedType is set only on the render right after mobility is banked, so the
-// coach note shows once (same one-shot pattern as the lift card).
-function renderMobilityCard(state, bankedType) {
-  const mount = document.getElementById("main");
-  mount.innerHTML = "";
-
+// ---- Mobility card ----
+function renderMobilityCard(state, mount, justBankedMob) {
   const type = "mobility";
   const checkedSet = checkedIndicesFor(type);
 
@@ -979,17 +1513,13 @@ function renderMobilityCard(state, bankedType) {
   card.appendChild(el("h2", null, MOBILITY.title));
   card.appendChild(el("p", "subhead", MOBILITY.subhead));
 
-  function onToggle(index, isChecked) {
-    toggleCheck(type, index, isChecked);
-    refreshDoneButton();
-  }
+  function onToggle(index, isChecked) { toggleCheck(type, index, isChecked); refreshDoneButton(); }
 
   MOBILITY.movements.forEach(function (name, index) {
     const item = { pair: null, name: name, scheme: MOBILITY.movementScheme };
-    card.appendChild(exerciseRow(item, index, type, checkedSet, onToggle));
+    card.appendChild(exerciseRow(item, index, checkedSet, onToggle));
   });
 
-  // Conditioning is the mobility "finisher".
   const fin = el("div", "finisher");
   fin.appendChild(el("div", "tag", "Cardio"));
   const finBody = el("div", "body");
@@ -998,48 +1528,41 @@ function renderMobilityCard(state, bankedType) {
   fin.appendChild(finBody);
   card.appendChild(fin);
 
+  // Follow-along option (external link opens in Safari; leaving a standalone
+  // PWA for a YouTube channel is expected and acceptable).
+  const yt = el("a", "ext-link", "Or follow along: " + MOBILITY.followAlong.label + " →");
+  yt.href = MOBILITY.followAlong.url;
+  yt.target = "_blank";
+  yt.rel = "noopener";
+  card.appendChild(yt);
+
   const doneBtn = el("button", "btn btn-done", "Mobility done");
-  doneBtn.addEventListener("click", function () {
-    if (allChecked()) bankSession(type);
-  });
+  doneBtn.addEventListener("click", function () { if (allChecked()) bankSession(type); });
   card.appendChild(doneBtn);
 
-  if (bankedType) {
-    const box = el("div", "coach");
-    box.appendChild(el("span", "who", "Coach"));
-    box.appendChild(document.createTextNode("Banked. Mobility is the work that lets you keep doing the work. Well spent."));
-    card.appendChild(box);
-  }
+  if (justBankedMob) card.appendChild(coachEventNode(state));
 
-  // Saturday is a non-lift day, so it gets the same "Train anyway" path as the
-  // rest-day card: pull the next A→B→C session forward (e.g. after a missed Friday).
+  // Saturday can also pull the next lift forward (the extra-day path).
   const trainLink = el("button", "train-anyway", "Feeling good? Train anyway →");
   trainLink.addEventListener("click", function () {
-    renderLiftCard(state);
+    const m = document.getElementById("today");
+    m.innerHTML = ""; renderGrid(state, m); renderLiftCard(state, m, null);
   });
   card.appendChild(trainLink);
 
   mount.appendChild(card);
 
-  function allChecked() {
-    return checkedIndicesFor(type).size === MOBILITY.movements.length;
-  }
-  function refreshDoneButton() {
-    doneBtn.disabled = !allChecked();
-  }
+  function allChecked() { return checkedIndicesFor(type).size === MOBILITY.movements.length; }
+  function refreshDoneButton() { doneBtn.disabled = !allChecked(); }
   refreshDoneButton();
 }
 
-// ---- Rest day (no completion mechanics) ----
-function renderRestCard(state) {
-  const mount = document.getElementById("main");
-  mount.innerHTML = "";
-
+// ---- Rest card ----
+function renderRestCard(state, mount) {
   const card = el("div", "card");
   card.appendChild(el("h2", null, "Rest day"));
   card.appendChild(el("p", "subhead", "Recovery is when the growth happens. The one job today is the food."));
 
-  // Nutrition front and center.
   const macros = el("div", "macros");
   const cal = el("div", "macro");
   cal.appendChild(el("div", "num", NUTRITION.calories));
@@ -1051,35 +1574,29 @@ function renderRestCard(state) {
   macros.appendChild(pro);
   card.appendChild(macros);
 
-  card.appendChild(el("p", "preview-line", "Rhythm: breakfast → lunch → shake → dinner → optional pre-bed snack. Eat every 3–4 hours."));
+  card.appendChild(el("p", "preview-line", "Rhythm: " + NUTRITION.rhythm));
 
-  // Preview the next session so the rest day still points forward.
   const preview = el("p", "preview-line");
   preview.appendChild(document.createTextNode("Next up: "));
   preview.appendChild(el("strong", null, sessionTitle(state.nextLift)));
   card.appendChild(preview);
 
-  // Friday: a weigh-in chip. Note we key this off the REAL weekday, not an
-  // override — the reminder should only nudge on an actual Friday.
   if (state.now.getDay() === 5) {
     card.appendChild(el("div", "chip", "Weigh-in day — log it in the vault note"));
   }
 
-  // "Train anyway" reveals the same next-in-sequence lift card (extra-day path).
   const trainLink = el("button", "train-anyway", "Feeling good? Train anyway →");
   trainLink.addEventListener("click", function () {
-    renderLiftCard(state);
+    const m = document.getElementById("today");
+    m.innerHTML = ""; renderGrid(state, m); renderLiftCard(state, m, null);
   });
   card.appendChild(trainLink);
 
   mount.appendChild(card);
 }
 
-// ---- Block complete (end of the 12 weeks) ----
-function renderBlockComplete(state) {
-  const mount = document.getElementById("main");
-  mount.innerHTML = "";
-
+// ---- Block complete (end of the 12 weeks) — confetti + a signed letter ----
+function renderBlockComplete(state, mount) {
   const card = el("div", "card");
   card.appendChild(el("h2", null, "Block complete 🎉"));
   card.appendChild(el("p", "subhead", "Twelve weeks banked. This is the test-and-measure step — then we plan phase two."));
@@ -1091,61 +1608,459 @@ function renderBlockComplete(state) {
   list.appendChild(el("li", null, "Progress photos — front, side, back."));
   card.appendChild(list);
 
+  // A longer sincere letter from Coach Burlap (he's earned the name by now).
+  const letter = el("div", "letter");
+  letter.appendChild(document.createTextNode(
+    "Kid — twelve weeks ago you couldn't do half of what you just did. You showed up when the couch was closer, " +
+    "you ate when you weren't hungry, you moved weight that used to move you. I talk a lot of trash, but here's the truth: " +
+    "the discipline you built in here is the thing that lasts. Muscle's just the receipt. Log your numbers, take the photos, " +
+    "then come find me and we'll build the road to 175."
+  ));
+  letter.appendChild(el("div", "sig", "— Coach Burlap"));
+  card.appendChild(letter);
+
   card.appendChild(el("div", "section-title", "Next"));
   card.appendChild(el("p", "preview-line", "Log the numbers in the vault note, then open Claude and ask it to build Phase 2 (the road to 175). Nothing loops here on its own — you decide when the next block starts."));
 
   mount.appendChild(card);
+
+  // Confetti once per app session, not on every re-render of the done screen.
+  if (!blockConfettiShown) { blockConfettiShown = true; fireConfetti(); }
 }
 
-// ---- Reference section (collapsible, always at the bottom) ----
-function renderReference() {
-  const mount = document.getElementById("reference");
+function makeExpl(boldPart, rest) {
+  const p = document.createElement("p");
+  p.style.margin = "0 0 8px";
+  if (boldPart) p.appendChild(el("strong", null, boldPart));
+  p.appendChild(document.createTextNode(rest));
+  return p;
+}
+
+
+/* ============================================================
+   LOCKER ROOM TAB  (8 sections, top to bottom)
+   ============================================================ */
+
+function renderLocker(state) {
+  const mount = document.getElementById("locker");
   mount.innerHTML = "";
 
-  mount.appendChild(el("div", "section-title", "Reference"));
-  const wrap = el("div", "reference");
+  renderLevelCard(state, mount);   // 1
+  renderFlameCard(state, mount);   // 2
+  renderBadgeWall(state, mount);   // 3
+  renderShareCard(state, mount);   // 4
+  renderMethod(state, mount);      // 5
+  renderMission(state, mount);     // 6
+  renderFuel(state, mount);        // 7
+  renderSmallPrint(mount);         // 8
+}
 
-  wrap.appendChild(refDetails("Nutrition targets", function (body) {
-    body.appendChild(makeP("Daily: ", NUTRITION.calories + " calories · " + NUTRITION.protein + " protein."));
-    body.appendChild(makeP("", "Breakfast every day (eggs + toast + banana + milk, OR overnight oats). Existing lunch and dinner stay; add rice/potatoes or olive oil to dinner."));
+// 1. Level card — level name big, XP bar to next level, one line per level.
+function renderLevelCard(state, mount) {
+  const lvl = state.level;
+  const card = el("div", "level-card");
+  card.appendChild(el("div", "level-name", lvl.name));
+
+  if (lvl.isMax) {
+    card.appendChild(el("div", "level-sub", "Top of the board — " + lvl.xp + " Mass banked."));
+    const bar = el("div", "xp-bar");
+    const fill = el("div", "xp-fill"); fill.style.width = "100%";
+    bar.appendChild(fill); card.appendChild(bar);
+    card.appendChild(el("div", "xp-nums", "MAXED"));
+  } else {
+    card.appendChild(el("div", "level-sub", "Next: " + lvl.nextName));
+    const span = lvl.nextThreshold - lvl.currentThreshold;
+    const into = lvl.xp - lvl.currentThreshold;
+    const pct = span > 0 ? Math.max(0, Math.min(100, Math.round((into / span) * 100))) : 0;
+    const bar = el("div", "xp-bar");
+    const fill = el("div", "xp-fill"); fill.style.width = pct + "%";
+    bar.appendChild(fill); card.appendChild(bar);
+    card.appendChild(el("div", "xp-nums", lvl.xp + " / " + lvl.nextThreshold + " Mass"));
+  }
+
+  const coach = el("div", "level-coach");
+  coach.appendChild(el("span", "who", state.coachName));
+  coach.appendChild(document.createTextNode(LEVEL_LINES[lvl.name] || ""));
+  card.appendChild(coach);
+
+  mount.appendChild(card);
+}
+
+// 2. Flame card — current heat name + the trailing-8-days rule in plain words.
+function renderFlameCard(state, mount) {
+  const card = el("div", "flame-card heat-" + state.heat);
+  const head = el("div", "heat-head");
+  head.appendChild(el("span", "heat-glyph", HEAT_LEVELS[state.heat].glyph));
+  head.appendChild(el("span", "heat-name", HEAT_LEVELS[state.heat].name));
+  card.appendChild(head);
+  card.appendChild(el("p", null,
+    "The flame is your momentum: it counts every session — lift or mobility — you've banked in the last 8 days, up to four. " +
+    "Full weeks (Mon/Wed/Fri lifts plus Saturday mobility) keep it at Inferno. Skip a stretch and it just cools down quietly — no penalty, relight it any time."));
+  mount.appendChild(card);
+}
+
+// 3. Badge wall — earned lit, unearned as silhouettes labeled "not yet".
+function renderBadgeWall(state, mount) {
+  const card = el("div", "badge-card");
+  card.appendChild(el("h3", null, "Badge wall"));
+  card.appendChild(el("p", "sub", "Every one is earned by banking sessions. The dim ones are just not yet."));
+
+  const grid = el("div", "badges");
+  BADGES.forEach(function (b) {
+    const earned = state.badges.indexOf(b.id) !== -1;
+    const cell = el("div", "badge " + (earned ? "earned" : "locked"));
+    // Locked badges show their own icon dimmed to a silhouette (CSS .locked),
+    // never a generic lock — you can preview each badge's art.
+    cell.appendChild(el("div", "icon", b.icon));
+    cell.appendChild(el("div", "bname", b.name));
+    if (earned) {
+      cell.appendChild(el("div", "hint", "Earned"));
+    } else {
+      cell.appendChild(el("div", "hint", b.hint));
+      cell.appendChild(el("div", "notyet", "not yet"));
+    }
+    grid.appendChild(cell);
+  });
+  card.appendChild(grid);
+  mount.appendChild(card);
+}
+
+// 4. Share card — draw a PNG and share it, with a graceful fallback chain.
+function renderShareCard(state, mount) {
+  const card = el("div", "share-card");
+  card.appendChild(el("h3", null, "Show off"));
+  card.appendChild(el("p", "sub", "Make a shareable card — your dots, your flame, your level. No account, no backend; it just makes an image."));
+  const btn = el("button", "btn btn-secondary", "Make my card");
+  btn.addEventListener("click", function () { shareCard(state, btn); });
+  card.appendChild(btn);
+  const status = el("div", "xp-nums"); status.id = "share-status"; status.style.marginTop = "10px";
+  card.appendChild(status);
+  mount.appendChild(card);
+}
+
+// 5. The Method — phases, A/B/C templates, supersets, double progression.
+function renderMethod(state, mount) {
+  const wrap = el("div", null);
+  const title = el("div", "section-title", "The Method");
+  title.id = "method-section";
+  wrap.appendChild(title);
+
+  wrap.appendChild(acc("The four phases — where you are now", function (body) {
+    const table = document.createElement("table");
+    const head = document.createElement("tr");
+    ["Weeks", "Phase", "Focus"].forEach(function (h) { head.appendChild(el("th", null, h)); });
+    table.appendChild(head);
+    PHASES.forEach(function (p) {
+      const tr = document.createElement("tr");
+      const range = p.weeks[0] === p.weeks[1] ? String(p.weeks[0]) : (p.weeks[0] + "–" + p.weeks[1]);
+      tr.appendChild(el("td", null, range));
+      const nameTd = el("td", null, p.name);
+      if (p.name === state.phase.name) nameTd.className = "highlight-now";
+      tr.appendChild(nameTd);
+      tr.appendChild(el("td", null, p.focus));
+      table.appendChild(tr);
+    });
+    body.appendChild(table);
+    body.appendChild(makeExpl("You are in ", "Week " + state.week + " — " + state.phase.name + "."));
   }));
 
-  wrap.appendChild(refDetails("Hard-gainer shake", function (body) {
-    body.appendChild(makeP("", NUTRITION.shake));
+  wrap.appendChild(acc("The three lift days (A / B / C)", function (body) {
+    ["A", "B", "C"].forEach(function (t) {
+      body.appendChild(makeExpl(WORKOUTS[t].title + " — ", WORKOUTS[t].targets));
+    });
+    body.appendChild(makeExpl("", "They rotate strictly in order. Miss a day and the rotation just pauses — the next session is always the next letter, never a skip."));
   }));
 
-  wrap.appendChild(refDetails("Grocery staples", function (body) {
-    body.appendChild(makeP("", NUTRITION.groceries));
+  wrap.appendChild(acc("Supersets & the double-progression rule", function (body) {
+    body.appendChild(makeExpl("Supersets: ", "the 1a/1b (and 2a/2b) pairs are done back to back — set of 'a', ~30s rest, set of 'b', ~60s rest, repeat. Time-efficient and keeps intensity up."));
+    body.appendChild(makeExpl("Double progression: ", NUTRITION.doubleProgression));
   }));
 
-  wrap.appendChild(refDetails("Double-progression rule", function (body) {
-    body.appendChild(makeP("", NUTRITION.doubleProgression));
+  mount.appendChild(wrap);
+}
+
+// 6. The Mission — the numbers and the feedback loop.
+function renderMission(state, mount) {
+  const wrap = el("div", null);
+  wrap.appendChild(el("div", "section-title", "The Mission"));
+
+  wrap.appendChild(acc("The numbers", function (body) {
+    body.appendChild(makeExpl("Start: ", MISSION.start));
+    body.appendChild(makeExpl("This block: ", MISSION.blockTarget));
+    body.appendChild(makeExpl("End goal: ", MISSION.endGoal));
+    body.appendChild(makeExpl("Pace: ", MISSION.pace));
+    body.appendChild(makeExpl("", MISSION.headline));
   }));
 
-  wrap.appendChild(refDetails("Weigh-in adjustment rules", function (body) {
-    const ul = el("ul");
+  wrap.appendChild(acc("The Friday weigh-in loop", function (body) {
+    const ul = document.createElement("ul");
     NUTRITION.weighIn.forEach(function (line) { ul.appendChild(el("li", null, line)); });
     body.appendChild(ul);
   }));
 
   mount.appendChild(wrap);
+}
 
-  // --- helpers ---
-  function refDetails(summaryText, fillBody) {
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = summaryText;
-    details.appendChild(summary);
-    const body = el("div", "ref-body");
-    fillBody(body);
-    details.appendChild(body);
-    return details;
+// 7. The Fuel — targets, breakfasts, the shake, groceries, rhythm.
+function renderFuel(state, mount) {
+  const wrap = el("div", null);
+  wrap.appendChild(el("div", "section-title", "The Fuel"));
+
+  wrap.appendChild(acc("Daily targets & rhythm", function (body) {
+    body.appendChild(makeExpl("Every day: ", NUTRITION.calories + " calories · " + NUTRITION.protein + " protein."));
+    body.appendChild(makeExpl("Rhythm: ", NUTRITION.rhythm));
+    body.appendChild(makeExpl("", "This plan succeeds or fails in the kitchen. The lifting tells the body where to put the weight; the food is the weight."));
+  }));
+
+  wrap.appendChild(acc("Breakfast (pick one, every day)", function (body) {
+    body.appendChild(makeExpl("Option A — ", NUTRITION.breakfastA));
+    body.appendChild(makeExpl("Option B — ", NUTRITION.breakfastB));
+  }));
+
+  wrap.appendChild(acc("The hard-gainer shake", function (body) {
+    body.appendChild(makeExpl("", NUTRITION.shake));
+  }));
+
+  wrap.appendChild(acc("Grocery staples", function (body) {
+    body.appendChild(makeExpl("", NUTRITION.groceries));
+  }));
+
+  mount.appendChild(wrap);
+}
+
+// 8. Small print — the honest localStorage limit.
+function renderSmallPrint(mount) {
+  const wrap = el("div", null);
+  wrap.appendChild(el("div", "section-title", "Small print"));
+  wrap.appendChild(acc("Where your data lives", function (body) {
+    body.appendChild(makeExpl("", "Everything the app remembers — your banked sessions, XP, flame, badges — lives in this one device's browser storage (localStorage). It is per-device, has no cloud backup, and is wiped if you clear Safari's website data."));
+    body.appendChild(makeExpl("", "So the dots are motivation, not a ledger. The vault note (90-Day Bulking Plan.md) stays the record of truth — that's where the weigh-in log lives."));
+  }));
+  mount.appendChild(wrap);
+}
+
+// A collapsible <details> accordion.
+function acc(summaryText, fillBody) {
+  const details = document.createElement("details");
+  details.className = "acc";
+  const summary = document.createElement("summary");
+  summary.textContent = summaryText;
+  details.appendChild(summary);
+  const body = el("div", "acc-body");
+  fillBody(body);
+  details.appendChild(body);
+  return details;
+}
+
+
+/* ============================================================
+   SHARE CARD  (canvas -> PNG -> share, with fallbacks)
+   Chain: draw canvas -> navigator.share({files}) -> navigator.share(text)
+   -> copy text to clipboard. Each step is guarded so an unsupported API on
+   iOS Safari degrades gracefully instead of throwing.
+   ============================================================ */
+
+function buildShareCanvas(state) {
+  const W = 1080, H = 1080;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  // Background.
+  ctx.fillStyle = "#0d1117"; ctx.fillRect(0, 0, W, H);
+
+  // Title.
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "800 64px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("BULK DAY", W / 2, 140);
+
+  ctx.fillStyle = "#9aa7b4";
+  ctx.font = "600 40px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("Week " + state.week + " of " + PROGRAM_WEEKS, W / 2, 200);
+
+  // Flame + level.
+  ctx.font = "120px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText(HEAT_LEVELS[state.heat].glyph, W / 2 - 180, 380);
+  ctx.fillStyle = "#f0a94c";
+  ctx.font = "800 72px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText(state.level.name.toUpperCase(), W / 2 + 60, 360);
+  ctx.fillStyle = "#f0a94c";
+  ctx.font = "600 36px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText(HEAT_LEVELS[state.heat].name, W / 2 - 180, 430);
+
+  // Dot grid (12 x 3).
+  const cols = 12, rows = 3, gap = 20, r = 22;
+  const gridW = cols * (r * 2) + (cols - 1) * gap;
+  const startX = (W - gridW) / 2 + r;
+  const startY = 560;
+  for (let i = 0; i < SESSIONS_TO_COMPLETE; i++) {
+    const col = i % cols, rowN = Math.floor(i / cols);
+    const cx = startX + col * (r * 2 + gap);
+    const cy = startY + rowN * (r * 2 + gap);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    if (i < state.banked) { ctx.fillStyle = "#3fb950"; ctx.fill(); }
+    else { ctx.strokeStyle = "#2a323d"; ctx.lineWidth = 4; ctx.stroke(); }
   }
-  function makeP(boldPart, rest) {
-    const p = document.createElement("p");
-    if (boldPart) p.appendChild(el("strong", null, boldPart));
-    p.appendChild(document.createTextNode(rest));
-    return p;
+
+  // Banked count.
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "800 56px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText(state.banked + " / 36 sessions banked", W / 2, 860);
+
+  ctx.fillStyle = "#9aa7b4";
+  ctx.font = "500 34px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("Road to 175 · counts up, never down", W / 2, 940);
+
+  return canvas;
+}
+
+function shareText(state) {
+  return "Bulk Day — Week " + state.week + " of 12. Level " + state.level.name +
+         ", flame " + HEAT_LEVELS[state.heat].name + ", " + state.banked + "/36 banked. 💪";
+}
+
+function shareCard(state, btn) {
+  const status = document.getElementById("share-status");
+  const setStatus = function (t) { if (status) status.textContent = t; };
+  const text = shareText(state);
+  const canvas = buildShareCanvas(state);
+
+  // Preferred: share the PNG as a file.
+  if (canvas && canvas.toBlob && navigator.canShare) {
+    try {
+      canvas.toBlob(function (blob) {
+        // toBlob's callback runs async, past the outer try — so guard it here
+        // too, or an unsupported File()/canShare on old iOS throws unhandled.
+        try {
+          if (!blob) { fallbackShare(); return; }
+          const file = new File([blob], "bulk-day.png", { type: "image/png" });
+          const payload = { files: [file], text: text };
+          // Validate the EXACT payload we intend to share (files + text), not
+          // just files — some Safari builds accept files alone but reject both.
+          if (navigator.canShare(payload)) {
+            navigator.share(payload)
+              .then(function () { setStatus("Shared."); })
+              .catch(function (err) {
+                // A user dismiss (AbortError) is not a failure; anything else
+                // drops down the text/clipboard fallback chain.
+                if (err && err.name === "AbortError") setStatus("Share sheet closed.");
+                else fallbackShare();
+              });
+          } else {
+            fallbackShare();
+          }
+        } catch (e) { fallbackShare(); }
+      }, "image/png");
+      return;
+    } catch (e) { /* fall through to the text/clipboard fallback */ }
+  }
+  fallbackShare();
+
+  // Fallbacks: share text, then copy to clipboard.
+  function fallbackShare() {
+    if (navigator.share) {
+      navigator.share({ text: text })
+        .then(function () { setStatus("Shared."); })
+        .catch(function () { copyFallback(); });
+    } else {
+      copyFallback();
+    }
+  }
+  function copyFallback() {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(function () { setStatus("Copied to clipboard — paste it to a friend."); })
+        .catch(function () { setStatus(text); });
+    } else {
+      setStatus(text);
+    }
+  }
+}
+
+
+/* ============================================================
+   OVERLAYS, TOASTS, CONFETTI, BANK EFFECTS
+   ============================================================ */
+
+// A centered overlay card (used for the flame explainer). Tap anywhere closes.
+function showOverlay(glyph, text, count) {
+  const root = document.getElementById("overlay-root");
+  root.innerHTML = "";
+  const overlay = el("div", "overlay");
+  const cardEl = el("div", "overlay-card");
+  cardEl.appendChild(el("div", "big", glyph));
+  const p = el("p"); p.appendChild(document.createTextNode(text));
+  cardEl.appendChild(p);
+  if (count !== null && count !== undefined) {
+    const c = el("p");
+    c.appendChild(document.createTextNode("Right now: "));
+    c.appendChild(el("span", "count", count + (count === 1 ? " session" : " sessions") + " in the last 8 days"));
+    cardEl.appendChild(c);
+  }
+  const close = el("button", "btn btn-secondary close", "Got it");
+  cardEl.appendChild(close);
+  overlay.appendChild(cardEl);
+  overlay.addEventListener("click", function () { root.innerHTML = ""; });
+  root.appendChild(overlay);
+}
+
+// A brief bottom toast (badge earned). Auto-clears after the animation.
+let toastTimer = null;
+function showToast(text) {
+  const root = document.getElementById("overlay-root");
+  const existing = root.querySelector(".toast");
+  if (existing) existing.remove();
+  const toast = el("div", "toast", text);
+  root.appendChild(toast);
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { if (toast.parentNode) toast.remove(); }, 4000);
+}
+
+// CSS confetti (no library): a burst of falling colored pieces.
+function fireConfetti() {
+  const root = document.getElementById("overlay-root");
+  if (root.querySelector(".confetti")) return;
+  const box = el("div", "confetti");
+  const colors = ["#3fb950", "#58a6ff", "#f0a94c", "#e3b341", "#e6edf3"];
+  for (let i = 0; i < 60; i++) {
+    const piece = document.createElement("i");
+    piece.style.left = (Math.random() * 100) + "vw";
+    piece.style.background = colors[i % colors.length];
+    piece.style.animationDuration = (2.4 + Math.random() * 1.8) + "s";
+    piece.style.animationDelay = (Math.random() * 0.6) + "s";
+    box.appendChild(piece);
+  }
+  root.appendChild(box);
+  setTimeout(function () { if (box.parentNode) box.remove(); }, 5200);
+}
+
+// After a bank: float the "+N MASS" tick and toast any newly earned badge once.
+function fireBankEffects(state) {
+  // XP tick.
+  const tick = el("div", "xp-tick", "+" + justBanked.xpGain + " MASS");
+  document.getElementById("overlay-root").appendChild(tick);
+  setTimeout(function () { if (tick.parentNode) tick.remove(); }, 1200);
+
+  // Badge toast — shown once per badge, tracked in bulkday.meta.seenBadges.
+  if (justBanked.newBadges && justBanked.newBadges.length > 0) {
+    const meta = loadMeta();
+    const unseen = justBanked.newBadges.filter(function (id) { return meta.seenBadges.indexOf(id) === -1; });
+    if (unseen.length > 0) {
+      // One bank can earn more than one badge — name them all in a single toast
+      // so none is silently swallowed, then mark them all seen.
+      const names = unseen.map(function (id) {
+        const b = BADGES.filter(function (x) { return x.id === id; })[0];
+        return b ? b.name : id;
+      });
+      const label = names.length === 1
+        ? names[0]
+        : names.slice(0, -1).join(", ") + " + " + names[names.length - 1];
+      showToast((names.length === 1 ? "Badge earned: " : "Badges earned: ") + label + " — see the Locker Room");
+      unseen.forEach(function (id) { meta.seenBadges.push(id); });
+      saveMeta(meta);
+    }
   }
 }
 
@@ -1157,45 +2072,49 @@ function renderReference() {
 function render() {
   const state = computeState();
 
-  // Consume the just-banked flag: it drives the coach note on THIS render only,
-  // then clears so the next render advances to the upcoming session.
-  const bankedType = justBankedType;
-  justBankedType = null;
-
-  // Always-visible chrome.
+  renderTabs(state);
   renderPhaseBanner(state);
-  renderGrid(state);
-  renderReference();
 
-  // The main card: block-complete wins over everything; then, if we just
-  // banked, show that session's card (with its coach note); otherwise day type.
-  if (state.blockComplete) {
-    renderBlockComplete(state);
-  } else if (bankedType === "mobility") {
-    renderMobilityCard(state, bankedType);
-  } else if (bankedType) {
-    renderLiftCard(state, bankedType);
-  } else if (state.day === "lift") {
-    renderLiftCard(state);
-  } else if (state.day === "mobility") {
-    renderMobilityCard(state);
+  const todayPanel = document.getElementById("today");
+  const lockerPanel = document.getElementById("locker");
+
+  if (state.activeTab === "locker") {
+    todayPanel.style.display = "none";
+    lockerPanel.style.display = "";
+    renderLocker(state);
   } else {
-    renderRestCard(state);
+    lockerPanel.style.display = "none";
+    todayPanel.style.display = "";
+    renderToday(state);
+  }
+
+  // One-shot bank effects (XP tick + badge toast) fire on the render right
+  // after a bank, then the flag clears so the next render is a plain view.
+  if (justBanked) {
+    // finally guarantees the one-shot flag clears even if an effect throws,
+    // so a later plain render (hashchange/visibilitychange) can't re-fire it.
+    try { fireBankEffects(state); }
+    finally { justBanked = null; }
   }
 }
 
 // First paint.
 render();
 
-// Re-render when the app comes back to the foreground. If it was left open
-// overnight, "today" has changed and the right card should now show.
+// Tab switches are pure hash changes: re-render, no navigation, no network.
+window.addEventListener("hashchange", function () {
+  document.getElementById("overlay-root").innerHTML = "";
+  render();
+});
+
+// Re-render when the app returns to the foreground (an app left open overnight
+// sees the new day and the right card).
 document.addEventListener("visibilitychange", function () {
   if (document.visibilityState === "visible") render();
 });
 
-// Register the service worker (the offline/installable layer).
-// scope "./" keeps it confined to /bulking-pwa/ — the correct scope for a
-// GitHub Pages project site. A missing/failed registration just means no
+// Register the service worker (the offline/installable layer). scope "./"
+// keeps it confined to /bulking-pwa/. A failed registration just means no
 // offline support; the app still works online, so we swallow the error.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function () {
