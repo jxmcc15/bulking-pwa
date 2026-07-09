@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<html lang="en">
 <meta charset="utf-8">
 <title>Bulk Day</title>
 
@@ -22,8 +23,10 @@
 <!-- theme-color tints the iOS status bar / Android toolbar to match the app. -->
 <meta name="theme-color" content="#0d1117">
 
-<!-- iOS-only hints so "Add to Home Screen" launches full-screen (standalone),
-     not inside a Safari tab with the address bar. -->
+<!-- Hints so "Add to Home Screen" launches full-screen (standalone),
+     not inside a browser tab with the address bar. The first is the standard
+     name (Android/Chrome); the apple-* ones are what iOS actually reads. -->
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Bulk Day">
@@ -586,7 +589,7 @@ function isBlockComplete(date, bankedCount) {
 
 // --- localStorage keys ---
 const KEY_SESSIONS = "bulkday.sessions"; // array of {date, type} in completion order
-const KEY_ACTIVE = "bulkday.active";     // {type, checked:[indices]} for the in-progress session
+const KEY_ACTIVE = "bulkday.active";     // {type, date, checked:[indices]} for the in-progress session
 
 // Read + parse a localStorage value, returning a fallback on ANY problem
 // (missing key, corrupt JSON, wrong shape). The app must never crash on
@@ -612,7 +615,8 @@ function loadActive() {
     const raw = localStorage.getItem(KEY_ACTIVE);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.type !== "string" || !Array.isArray(parsed.checked)) return null;
+    if (!parsed || typeof parsed.type !== "string" ||
+        typeof parsed.date !== "string" || !Array.isArray(parsed.checked)) return null;
     return parsed;
   } catch (e) {
     return null;
@@ -716,7 +720,8 @@ function bankSession(type) {
 // Toggle one exercise's checkbox in the in-progress session and persist it,
 // so a mid-workout app switch (to a timer, say) doesn't lose progress.
 // If the active record is for a different session type than the one on screen,
-// we start fresh — you can't carry checks from A into B.
+// we start fresh — you can't carry checks from A into B. Every save re-stamps
+// today's date, so a workout that straddles midnight keeps its checks.
 function toggleCheck(sessionType, index, isChecked) {
   let active = loadActive();
   if (!active || active.type !== sessionType) {
@@ -726,18 +731,27 @@ function toggleCheck(sessionType, index, isChecked) {
   if (isChecked) set.add(index);
   else set.delete(index);
   active.checked = Array.from(set).sort(function (a, b) { return a - b; });
+  active.date = localDateString(getEffectiveDate());
   saveActive(active);
 }
 
 // Which checkbox indices are currently ticked for this session type?
-// If a record is stored for a DIFFERENT type than the one on screen, the
-// rotation has moved on (or a new day started) and the record is stale — drop
-// it here so last week's checkmarks can never reappear. (Spec: active is
-// cleared on bank OR when its type no longer matches the next session.)
+// A record counts only if it matches the type on screen AND was saved TODAY.
+// Staleness is judged by date, not type: half-checked boxes from Monday's
+// unfinished Day A must not reappear on Wednesday even though the rotation
+// still says "A" — you didn't do those reps today. Old-dated records are
+// deleted here; a same-day record of a DIFFERENT type is left alone, so
+// peeking at the lift card via "Train anyway" can't wipe an in-progress
+// session. (Spec: active is cleared on bank or when it goes stale.)
 function checkedIndicesFor(sessionType) {
+  const today = localDateString(getEffectiveDate());
   const active = loadActive();
-  if (active && active.type === sessionType) return new Set(active.checked);
-  if (active) saveActive(null);
+  if (!active) return new Set();
+  if (active.date !== today) {
+    saveActive(null);
+    return new Set();
+  }
+  if (active.type === sessionType) return new Set(active.checked);
   return new Set();
 }
 
@@ -865,6 +879,9 @@ function exerciseRow(item, index, sessionType, checkedSet, onToggle) {
   const labelEl = el("label", "check");
   const box = document.createElement("input");
   box.type = "checkbox";
+  // The label has no visible text, so give VoiceOver the exercise name —
+  // otherwise it announces an anonymous "checkbox, unchecked".
+  box.setAttribute("aria-label", item.name + " — mark done");
   box.checked = checkedSet.has(index);
   box.addEventListener("change", function () { onToggle(index, box.checked); });
   labelEl.appendChild(box);

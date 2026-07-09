@@ -1,5 +1,8 @@
 # Bulk Day
 
+**▶ Open the app: https://jxmcc15.github.io/bulking-pwa/**
+(This page you're reading is just the source code — the link above is the app itself.)
+
 A tiny, installable phone app for James's 90-day bulking program. Open it from the iPhone home screen and the **next session shows with zero taps** — the right workout for today, the phase you're in, and a chain of dots for every session you've banked. It replaces squinting at a markdown table at the rack.
 
 It counts up, never down. There's no "missed", no red, no streak to break — an empty dot just means *not yet*.
@@ -21,7 +24,7 @@ There's also a **"Train anyway"** link on non-lift days if you want to do the ne
 
 ## Install it on your iPhone
 
-1. Open the live URL in **Safari** (it must be Safari — Chrome on iOS can't install PWAs).
+1. Open **https://jxmcc15.github.io/bulking-pwa/** in **Safari** (it must be Safari — Chrome on iOS can't install PWAs).
 2. Tap the **Share** button (the square with an up-arrow).
 3. Scroll down and tap **Add to Home Screen**.
 4. Tap **Add** in the top-right.
@@ -60,4 +63,4 @@ Example: `http://localhost:8000/?day=fri&week=9&banked=20`
 
 ### Updating the plan later
 
-The workout/nutrition content is a JavaScript object near the top of `index.html`. If the plan changes in the vault note, edit that object to match, then **bump the cache name in `sw.js`** (`bulk-day-v1` → `bulk-day-v2`) so installed copies pick up the new version on their next online load. The service worker deletes the old cache automatically when the new version activates.
+The workout/nutrition content is a JavaScript object near the top of `index.html`. If the plan changes in the vault note, edit that object to match, commit, and push — that's the whole deploy. Installed copies pick up an `index.html` change on their **second** online launch (the first launch shows the cached copy while quietly downloading the new one in the background). Only if you change `manifest.json` or the icon do you need to **bump the cache name in `sw.js`** (`bulk-day-v2` → `bulk-day-v3`); the service worker deletes old caches automatically when the new version activates.
